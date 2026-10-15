@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>EverRec 设置</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;background:#FFFFFF}
+a{color:#545454}a:hover{color:#383838}
+button,select,input{font-family:inherit}
+</style>
+</helmet>
+<div style="min-height: 100vh; background: #FFFFFF; color: #383838; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif; font-size: 14px">
+  <header style="display: flex; flex-wrap: wrap; align-items: center; gap: 24px; padding: 0 24px; min-height: 56px; background: #F5F5F5; color: #383838; border-bottom: 1px solid #D4D4D4">
+    <div style="display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 16px">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#545454" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><circle cx="12" cy="12" r="3.5" fill="#545454" stroke="none"></circle></svg>
+      <span>EverRec 恒录</span>
+    </div>
+    <nav aria-label="主导航" style="display: flex; flex-wrap: wrap; gap: 4px; flex: 1 1 auto">
+      <a href="Main.dc.html" style="padding: 8px 12px; border-radius: 6px; color: #474747; text-decoration: none">设备墙</a>
+      <a href="Playback.dc.html" style="padding: 8px 12px; border-radius: 6px; color: #474747; text-decoration: none">录像回放</a>
+      <a href="Settings.dc.html" style="padding: 8px 12px; border-radius: 0; box-shadow: inset 0 -2px 0 #545454; color: #383838; font-weight: 600; text-decoration: none">设置</a>
+    </nav>
+    <a href="#logout" style="color: #474747; font-size: 13px">退出</a>
+  </header>
+
+  <main style="max-width: 960px; margin: 0 auto; padding: 24px 28px 120px; box-sizing: border-box; display: flex; flex-direction: column; gap: 18px">
+    <div>
+      <h1 style="margin: 0; font-size: 24px; font-weight: 600">设置</h1>
+      <p style="margin: 6px 0 0; font-size: 13px; color: #666666">这里是所有电脑共用的一套设置，保存后约 30 秒内下发。个别电脑需要不同设置时，在最下方单独覆盖。</p>
+    </div>
+
+    <section style="background: #FFFFFF; border: 1px solid #D4D4D4; border-radius: 6px">
+      <h2 style="margin: 0; padding: 12px 16px; font-size: 14px; font-weight: 600; background: #F5F5F5; border-radius: 6px 6px 0 0; border-bottom: 1px solid #D4D4D4">录制</h2>
+      <div style="padding: 16px 20px; display: flex; flex-direction: column; gap: 16px">
+        <div>
+          <div style="color: #666666; margin-bottom: 8px">码率档位</div>
+          <div role="radiogroup" aria-label="码率档位" style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px">
+            <sc-for list="{{presets}}" as="p" hint-placeholder-count="3">
+              <button type="button" role="radio" aria-checked="{{p.checked}}" onClick="{{p.pick}}" style="{{p.style}}"><strong style="display: block; font-size: 15px">{{p.name}}</strong><span style="font-size: 12px; color: #666666">{{p.desc}}</span></button>
+            </sc-for>
+          </div>
+        </div>
+        <label style="display: flex; align-items: center; gap: 10px"><input type="checkbox" checked style="width: 18px; height: 18px"> 画面左上角叠加时间和位置编号（水印）</label>
+      </div>
+    </section>
+
+    <section style="background: #FFFFFF; border: 1px solid #D4D4D4; border-radius: 6px">
+      <h2 style="margin: 0; padding: 12px 16px; font-size: 14px; font-weight: 600; background: #F5F5F5; border-radius: 6px 6px 0 0; border-bottom: 1px solid #D4D4D4">保留与覆盖</h2>
+      <div style="display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 14px 16px; align-items: center; padding: 16px 20px">
+        <label for="s-days" style="color: #666666">保留天数</label>
+        <span style="display: flex; align-items: center; gap: 8px"><input id="s-days" type="number" value="90" min="1" style="width: 96px; height: 32px; border: 1px solid #D4D4D4; border-radius: 6px; padding: 0 10px; font-size: 14px"> 天</span>
+
+        <span id="s-roll-label" style="color: #666666">滚动覆盖</span>
+        <span style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap">
+          <button type="button" role="switch" aria-checked="{{rollAria}}" aria-labelledby="s-roll-label" onClick="{{toggleRoll}}" style="{{rollTrack}}"><span style="{{rollKnob}}"></span></button>
+          <span style="font-size: 13px">{{rollText}}</span>
+        </span>
+
+        <label for="s-local" style="color: #666666">每台电脑本地空间</label>
+        <span style="display: flex; align-items: center; gap: 8px"><input id="s-local" type="number" value="20" style="width: 96px; height: 32px; border: 1px solid #D4D4D4; border-radius: 6px; padding: 0 10px; font-size: 14px"> GB <span style="font-size: 12px; color: #666666">满了只删已上传的旧录像</span></span>
+      </div>
+      <sc-if value="{{rollOff}}" hint-placeholder-val="{{ false }}">
+        <div style="margin: 0 20px 16px; padding: 10px 14px; border-radius: 6px; background: #F0F0F0; color: #545454; font-size: 13px">关闭后不再自动删除录像。磁盘 85% 时告警，95% 时暂停接收上传，各电脑继续在本地录制。</div>
+      </sc-if>
+    </section>
+
+    <section style="background: #FFFFFF; border: 1px solid #D4D4D4; border-radius: 6px">
+      <h2 style="margin: 0; padding: 12px 16px; font-size: 14px; font-weight: 600; background: #F5F5F5; border-radius: 6px 6px 0 0; border-bottom: 1px solid #D4D4D4">上传</h2>
+      <div style="display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 14px 16px; align-items: center; padding: 16px 20px">
+        <label for="s-rate" style="color: #666666">单台限速</label>
+        <span style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap"><input id="s-rate" type="number" value="1" style="width: 72px; height: 32px; border: 1px solid #D4D4D4; border-radius: 6px; padding: 0 10px; font-size: 14px"> Mbps 平时 <span style="width: 8px"></span><input aria-label="补传限速" type="number" value="4" style="width: 72px; height: 32px; border: 1px solid #D4D4D4; border-radius: 6px; padding: 0 10px; font-size: 14px"> Mbps 补传</span>
+        <label for="s-window" style="color: #666666">补传时段</label>
+        <select id="s-window" style="height: 32px; max-width: 280px; border: 1px solid #D4D4D4; border-radius: 6px; padding: 0 8px; font-size: 14px; background: #FFFFFF"><option>任何时间</option><option>仅夜间 22:00 – 06:00</option></select>
+      </div>
+    </section>
+
+    <section style="background: #FFFFFF; border: 1px solid #D4D4D4; border-radius: 6px">
+      <h2 style="margin: 0; padding: 12px 16px; font-size: 14px; font-weight: 600; background: #F5F5F5; border-radius: 6px 6px 0 0; border-bottom: 1px solid #D4D4D4">告警推送</h2>
+      <div style="display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 14px 16px; align-items: center; padding: 16px 20px">
+        <label for="s-hook" style="color: #666666">推送地址</label>
+        <span style="display: flex; gap: 8px; flex-wrap: wrap"><input id="s-hook" type="url" value="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=••••" style="flex: 1 1 320px; height: 32px; border: 1px solid #D4D4D4; border-radius: 6px; padding: 0 10px; font-size: 13px; font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace"><button type="button" style="height: 32px; padding: 0 14px; border: 1px solid #545454; border-radius: 6px; background: #FFFFFF; color: #545454; cursor: pointer">发送测试</button></span>
+        <label for="s-fmt" style="color: #666666">消息格式</label>
+        <select id="s-fmt" style="height: 32px; max-width: 280px; border: 1px solid #D4D4D4; border-radius: 6px; padding: 0 8px; font-size: 14px; background: #FFFFFF"><option>企业微信</option><option>钉钉</option><option>通用 JSON</option></select>
+        <span style="color: #666666">推送哪些事件</span>
+        <span style="display: flex; gap: 16px; flex-wrap: wrap">
+          <label style="display: flex; gap: 6px; align-items: center"><input type="checkbox" checked> 没在录像</label>
+          <label style="display: flex; gap: 6px; align-items: center"><input type="checkbox" checked> 失联</label>
+          <label style="display: flex; gap: 6px; align-items: center"><input type="checkbox" checked> 空间不足</label>
+          <label style="display: flex; gap: 6px; align-items: center"><input type="checkbox"> 恢复正常</label>
+        </span>
+        <span></span>
+        <span style="font-size: 13px; color: #666666">最近推送 10:01:42 成功</span>
+      </div>
+    </section>
+
+    <section style="background: #FFFFFF; border: 1px solid #D4D4D4; border-radius: 6px; overflow: hidden">
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; background: #F5F5F5; border-radius: 6px 6px 0 0; border-bottom: 1px solid #D4D4D4">
+        <h2 style="margin: 0; font-size: 15px; font-weight: 600">单独设置的电脑</h2>
+        <button type="button" style="height: 34px; padding: 0 12px; border: 1px solid #D4D4D4; border-radius: 6px; background: #FFFFFF; cursor: pointer; font-size: 13px">添加</button>
+      </div>
+      <table style="width: 100%; border-collapse: collapse; font-size: 13px">
+        <thead><tr style="text-align: left; color: #666666; background: #F5F5F5"><th style="padding: 9px 20px; font-weight: 500">位置编号</th><th style="padding: 9px 12px; font-weight: 500">不同于统一设置的项</th><th style="padding: 9px 20px; font-weight: 500">操作</th></tr></thead>
+        <tbody>
+          <tr style="border-top: 1px solid #F0F0F0"><td style="padding: 10px 20px; font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace">HD-PD-A-3F-016</td><td style="padding: 10px 12px">码率档位：中</td><td style="padding: 10px 20px"><a href="#edit">修改</a> · <a href="#reset">恢复统一</a></td></tr>
+          <tr style="border-top: 1px solid #F0F0F0"><td style="padding: 10px 20px; font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace">SUB-B-2F-*</td><td style="padding: 10px 12px">补传时段：仅夜间</td><td style="padding: 10px 20px"><a href="#edit">修改</a> · <a href="#reset">恢复统一</a></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section style="background: #FFFFFF; border: 1px solid #D4D4D4; border-radius: 6px">
+      <div style="padding: 12px 16px; background: #F5F5F5; border-radius: 6px 6px 0 0; border-bottom: 1px solid #D4D4D4">
+        <h2 style="margin: 0; font-size: 15px; font-weight: 600">位置选项</h2>
+        <div style="font-size: 13px; color: #666666; margin-top: 4px">客户端连上服务器后，位置只能从这里的选项中选择；括号内是用于位置编号的编码</div>
+      </div>
+      <div style="display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 12px 16px; align-items: center; padding: 16px 20px">
+        <span style="color: #666666">州</span>
+        <span style="display: flex; flex-wrap: wrap; gap: 6px"><span style="padding: 4px 10px; border-radius: 2em; background: #F0F0F0">华东州（HD）</span><span style="padding: 4px 10px; border-radius: 2em; background: #F0F0F0">华南州（HN）</span><button type="button" style="padding: 4px 10px; border-radius: 2em; border: 1px dashed #D4D4D4; background: #FFFFFF; color: #545454; cursor: pointer">＋ 添加</button></span>
+        <span style="color: #666666">区</span>
+        <span style="display: flex; flex-wrap: wrap; gap: 6px"><span style="padding: 4px 10px; border-radius: 2em; background: #F0F0F0">浦东区（PD）</span><span style="padding: 4px 10px; border-radius: 2em; background: #F0F0F0">闵行区（MH）</span><span style="padding: 4px 10px; border-radius: 2em; background: #F0F0F0">子公司（SUB）</span><button type="button" style="padding: 4px 10px; border-radius: 2em; border: 1px dashed #D4D4D4; background: #FFFFFF; color: #545454; cursor: pointer">＋ 添加</button></span>
+        <span style="color: #666666">楼栋</span>
+        <span style="display: flex; flex-wrap: wrap; gap: 6px"><span style="padding: 4px 10px; border-radius: 2em; background: #F0F0F0">A栋（A）</span><span style="padding: 4px 10px; border-radius: 2em; background: #F0F0F0">B栋（B）</span><button type="button" style="padding: 4px 10px; border-radius: 2em; border: 1px dashed #D4D4D4; background: #FFFFFF; color: #545454; cursor: pointer">＋ 添加</button></span>
+        <span style="color: #666666">楼层</span>
+        <span style="display: flex; flex-wrap: wrap; gap: 6px"><span style="padding: 4px 10px; border-radius: 2em; background: #F0F0F0">1F – 6F</span><button type="button" style="padding: 4px 10px; border-radius: 2em; border: 1px dashed #D4D4D4; background: #FFFFFF; color: #545454; cursor: pointer">＋ 添加</button></span>
+        <span style="color: #666666">编号</span>
+        <span style="font-size: 13px; color: #666666">在客户端填写，三位数字，同一楼层内不能重复</span>
+      </div>
+    </section>
+
+    <section style="background: #FFFFFF; border: 1px solid #D4D4D4; border-radius: 6px">
+      <h2 style="margin: 0; padding: 12px 16px; font-size: 14px; font-weight: 600; background: #F5F5F5; border-radius: 6px 6px 0 0; border-bottom: 1px solid #D4D4D4">客户端下载与更新</h2>
+      <div style="display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 14px 16px; align-items: center; padding: 16px 20px">
+        <span style="color: #666666">最新版本</span>
+        <span style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap"><strong>1.0.0</strong><span style="font-size: 13px; color: #666666">2026-10-20 发布</span><a href="#download" style="display: inline-flex; align-items: center; height: 36px; padding: 0 14px; border: 1px solid rgba(0,0,0,0.15); border-radius: 6px; background: #545454; color: #FFFFFF; text-decoration: none">下载安装包</a><a href="#upload">上传新版本</a></span>
+        <span style="color: #666666">各电脑的版本</span>
+        <span style="font-size: 13px">33 台 1.0.0 · <span style="color: #404040">2 台 0.9.8（等待更新）</span></span>
+        <label for="s-update" style="color: #666666">自动更新</label>
+        <select id="s-update" style="height: 32px; max-width: 320px; border: 1px solid #D4D4D4; border-radius: 6px; padding: 0 8px; font-size: 14px; background: #FFFFFF"><option>自动，夜间 02:00 – 04:00 安装</option><option>只提醒，不自动安装</option></select>
+      </div>
+    </section>
+
+    <section style="background: #FFFFFF; border: 1px solid #D4D4D4; border-radius: 6px">
+      <h2 style="margin: 0; padding: 12px 16px; font-size: 14px; font-weight: 600; background: #F5F5F5; border-radius: 6px 6px 0 0; border-bottom: 1px solid #D4D4D4">子公司中转节点</h2>
+      <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 20px">
+        <span style="width: 10px; height: 10px; border-radius: 50%; background: #595959"></span>
+        <span style="font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace">https://relay.sub.local:8443</span>
+        <span style="font-size: 13px; color: #666666">编号前缀 SUB · 8 台 · 12 秒前拉取成功</span>
+        <a href="#relay" style="margin-left: auto">修改</a>
+      </div>
+    </section>
+  </main>
+
+  <div style="position: sticky; bottom: 0; display: flex; align-items: center; gap: 12px; padding: 14px 28px; background: #FFFFFF; border-top: 1px solid #D4D4D4">
+    <span style="font-size: 13px; color: #666666">保存后约 30 秒内下发到所有电脑</span>
+    <button type="button" style="margin-left: auto; height: 40px; padding: 0 20px; border: 1px solid rgba(0,0,0,0.15); border-radius: 6px; background: #545454; color: #FFFFFF; font-size: 14px; font-weight: 500; cursor: pointer">保存</button>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1000}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { roll: true, preset: 'xlow' };
+  }
+  renderVals() {
+    const on = this.state.roll;
+    const defs = [
+      { id: 'xlow', name: '极低（推荐）', desc: '360p · 5 fps · 约 30 MB/小时' },
+      { id: 'low', name: '低', desc: '480p · 8 fps · 约 70 MB/小时' },
+      { id: 'mid', name: '中', desc: '720p · 10 fps · 约 220 MB/小时' }
+    ];
+    const presets = defs.map((p) => {
+      const sel = p.id === this.state.preset;
+      return {
+        name: p.name, desc: p.desc, checked: sel ? 'true' : 'false',
+        pick: () => this.setState({ preset: p.id }),
+        style: 'text-align: left; padding: 12px 14px; border-radius: 6px; cursor: pointer; background: ' + (sel ? '#F0F0F0' : '#FFFFFF') + '; border: ' + (sel ? '2px solid #545454' : '1px solid #D4D4D4')
+      };
+    });
+    return {
+      presets,
+      rollAria: on ? 'true' : 'false',
+      rollOff: !on,
+      rollText: on ? '开启：超出保留天数或磁盘 85% 时删除最旧录像' : '关闭：不自动删除录像',
+      toggleRoll: () => this.setState({ roll: !on }),
+      rollTrack: 'position: relative; width: 48px; height: 28px; border-radius: 999px; border: none; cursor: pointer; padding: 0; flex: none; background: ' + (on ? '#545454' : '#B3B3B3'),
+      rollKnob: 'position: absolute; top: 3px; width: 22px; height: 22px; border-radius: 50%; background: #FFFFFF; left: ' + (on ? '23px' : '3px')
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>EverRec 设备墙</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;background:#FFFFFF}
+a{color:#545454}a:hover{color:#383838}
+button,input{font-family:inherit}
+</style>
+</helmet>
+<div style="min-height: 100vh; background: #FFFFFF; color: #383838; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif; font-size: 14px">
+  <header style="display: flex; flex-wrap: wrap; align-items: center; gap: 24px; padding: 0 24px; min-height: 56px; background: #F5F5F5; color: #383838; border-bottom: 1px solid #D4D4D4">
+    <div style="display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 16px">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#545454" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><circle cx="12" cy="12" r="3.5" fill="#545454" stroke="none"></circle></svg>
+      <span>EverRec 恒录</span>
+    </div>
+    <nav aria-label="主导航" style="display: flex; flex-wrap: wrap; gap: 4px; flex: 1 1 auto">
+      <a href="Main.dc.html" style="padding: 8px 12px; border-radius: 0; box-shadow: inset 0 -2px 0 #545454; color: #383838; font-weight: 600; text-decoration: none">设备墙</a>
+      <a href="Playback.dc.html" style="padding: 8px 12px; border-radius: 6px; color: #474747; text-decoration: none">录像回放</a>
+      <a href="Settings.dc.html" style="padding: 8px 12px; border-radius: 6px; color: #474747; text-decoration: none">设置</a>
+    </nav>
+    <a href="#logout" style="color: #474747; font-size: 13px">退出</a>
+  </header>
+
+  <main style="max-width: 1360px; margin: 0 auto; padding: 24px 28px 40px; box-sizing: border-box">
+    <div style="display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 18px">
+      <div>
+        <h1 style="margin: 0; font-size: 24px; font-weight: 600">设备墙</h1>
+        <div style="font-size: 13px; color: #666666; margin-top: 4px">每 30 秒自动刷新 · 最后更新 10:30:18</div>
+      </div>
+      <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap">
+        <label for="code-filter" style="font-size: 13px; color: #666666">位置编号</label>
+        <input id="code-filter" type="search" value="HD-PD-A" placeholder="输入编号前缀，如 HD-PD" style="width: 240px; height: 32px; box-sizing: border-box; padding: 0 12px; border: 1px solid #D4D4D4; border-radius: 6px; font-size: 14px; font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace">
+      </div>
+    </div>
+
+    <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px" role="group" aria-label="按状态筛选">
+      <sc-for list="{{filters}}" as="f" hint-placeholder-count="5">
+        <button type="button" onClick="{{f.pick}}" style="{{f.style}}"><span style="{{f.dot}}"></span>{{f.label}} <strong>{{f.count}}</strong></button>
+      </sc-for>
+      <span style="margin-left: auto; align-self: center; font-size: 13px; color: #666666">今日录像覆盖率 <strong style="color: #383838">99.4%</strong></span>
+    </div>
+
+    <div role="alert" style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 16px; border: 1px solid #8C8C8C; background: #E8E8E8; border-radius: 6px; margin-bottom: 18px">
+      <span style="font-weight: 600; color: #1A1A1A">没在录像</span>
+      <span>HD-PD-A-4F-021 录像文件 60 秒没有增长，已自动重启录制 2 次</span>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 16px">
+      <sc-for list="{{devices}}" as="d" hint-placeholder-count="12">
+        <article style="background: #FFFFFF; border: 1px solid #D4D4D4; border-radius: 6px; overflow: hidden">
+          <div style="{{d.thumbStyle}}">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#8C8C8C" stroke-width="1.5" aria-hidden="true"><rect x="3" y="6" width="13" height="12" rx="2"></rect><path d="M16 10l5-3v10l-5-3"></path></svg>
+            <span style="position: absolute; left: 10px; bottom: 8px; font-size: 12px; color: #D4D4D4">{{d.note}}</span>
+            <span style="{{d.pillStyle}}">{{d.statusText}}</span>
+          </div>
+          <div style="padding: 12px 14px 14px">
+            <div style="font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size: 14px; font-weight: 500">{{d.code}}</div>
+            <div style="display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; font-size: 12px; color: #666666">
+              <span>心跳 {{d.beat}}</span>
+              <span>待上传 {{d.pending}}</span>
+            </div>
+          </div>
+        </article>
+      </sc-for>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1000}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { filter: 'all' };
+  }
+  renderVals() {
+    const tone = {
+      ok: { text: '正常录制', fg: '#595959', bg: '#F0F0F0' },
+      local: { text: '离线本地录制', fg: '#404040', bg: '#F0F0F0' },
+      err: { text: '没在录像', fg: '#1A1A1A', bg: '#E8E8E8' },
+      lost: { text: '失联', fg: '#595959', bg: '#F0F0F0' }
+    };
+    const raw = [
+      { code: 'HD-PD-A-3F-011', s: 'ok', beat: '8 秒前', pending: '0', note: '1 分钟前' },
+      { code: 'HD-PD-A-3F-012', s: 'ok', beat: '14 秒前', pending: '0', note: '1 分钟前' },
+      { code: 'HD-PD-A-3F-013', s: 'ok', beat: '3 秒前', pending: '0', note: '1 分钟前' },
+      { code: 'HD-PD-A-3F-014', s: 'local', beat: '恢复中', pending: '46 段', note: '离线 3 小时 52 分' },
+      { code: 'HD-PD-A-3F-015', s: 'ok', beat: '21 秒前', pending: '0', note: '1 分钟前' },
+      { code: 'HD-PD-A-3F-016', s: 'ok', beat: '5 秒前', pending: '0', note: '1 分钟前' },
+      { code: 'HD-PD-A-4F-021', s: 'err', beat: '9 秒前', pending: '0', note: '文件 60 秒没增长' },
+      { code: 'HD-PD-A-4F-022', s: 'ok', beat: '12 秒前', pending: '0', note: '1 分钟前' },
+      { code: 'HD-PD-A-4F-023', s: 'lost', beat: '6 分钟前', pending: '未知', note: '最后画面 09:56' },
+      { code: 'HD-PD-A-4F-024', s: 'ok', beat: '2 秒前', pending: '0', note: '1 分钟前' },
+      { code: 'HD-PD-A-4F-025', s: 'ok', beat: '17 秒前', pending: '0', note: '1 分钟前' },
+      { code: 'HD-PD-A-4F-026', s: 'ok', beat: '25 秒前', pending: '0', note: '1 分钟前' }
+    ];
+    const f = this.state.filter;
+    const devices = raw.filter((d) => f === 'all' || d.s === f).map((d) => {
+      const t = tone[d.s];
+      return {
+        ...d,
+        statusText: t.text,
+        pillStyle: 'position: absolute; top: 8px; right: 8px; padding: 3px 8px; border-radius: 2em; font-size: 12px; font-weight: 500; background: ' + t.bg + '; color: ' + t.fg,
+        thumbStyle: 'position: relative; aspect-ratio: 16 / 9; display: flex; align-items: center; justify-content: center; background: ' + (d.s === 'lost' ? '#5C5C5C' : '#3F3F3F') + (d.s === 'err' ? '; box-shadow: inset 0 0 0 3px #FFFFFF' : '')
+      };
+    });
+    const defs = [
+      { id: 'all', label: '全部', c: '#383838' },
+      { id: 'ok', label: '正常', c: '#595959' },
+      { id: 'local', label: '离线本地', c: '#404040' },
+      { id: 'err', label: '没在录像', c: '#1A1A1A' },
+      { id: 'lost', label: '失联', c: '#595959' }
+    ];
+    const filters = defs.map((x) => {
+      const on = x.id === f;
+      return {
+        label: x.label,
+        count: x.id === 'all' ? raw.length : raw.filter((d) => d.s === x.id).length,
+        pick: () => this.setState({ filter: x.id }),
+        dot: x.id === 'all' ? 'display: none' : 'display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: ' + (on ? '#FFFFFF' : x.c),
+        style: 'height: 36px; padding: 0 14px; border-radius: 6px; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; border: 1px solid ' + (on ? '#545454' : '#D4D4D4') + '; background: ' + (on ? '#545454' : '#FFFFFF') + '; color: ' + (on ? '#FFFFFF' : '#383838')
+      };
+    });
+    return { devices, filters };
+  }
+}
+</script>
+</body>
+</html>

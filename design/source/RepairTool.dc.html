@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>EverRec 视频修复工具</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:#545454}a:hover{color:#383838}
+button{font-family:inherit}
+</style>
+</helmet>
+<div style="width: 960px; height: 640px; box-sizing: border-box; display: flex; flex-direction: column; background: #FFFFFF; color: #383838; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif; font-size: 15px; border: 1px solid #D4D4D4; border-radius: 6px; overflow: hidden">
+  <div style="display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 0 0 14px; background: #F5F5F5; border-bottom: 1px solid #D4D4D4; font-size: 13px">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#545454" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><circle cx="12" cy="12" r="3.5" fill="#545454" stroke="none"></circle></svg>
+    <span style="font-weight: 500">EverRec 视频修复工具</span>
+    <span style="margin-left: auto; display: flex">
+      <button type="button" aria-label="最小化" style="width: 46px; height: 40px; border: none; background: transparent; cursor: pointer; color: #666666">—</button>
+      <button type="button" aria-label="关闭" style="width: 46px; height: 40px; border: none; background: transparent; cursor: pointer; color: #666666">✕</button>
+    </span>
+  </div>
+
+  <sc-if value="{{isDrop}}" hint-placeholder-val="{{ true }}">
+    <div style="flex: 1; display: flex; flex-direction: column; gap: 18px; padding: 28px 36px; box-sizing: border-box; min-height: 0">
+      <div style="display: flex; align-items: center; gap: 14px">
+        <span style="width: 30px; height: 30px; border-radius: 50%; background: #545454; color: #FFFFFF; display: flex; align-items: center; justify-content: center; font-weight: 600">1</span>
+        <span style="font-size: 18px; font-weight: 600">放入要检查的录像</span>
+        <span style="color: #8C8C8C">→</span>
+        <span style="width: 30px; height: 30px; border-radius: 50%; background: #D4D4D4; color: #666666; display: flex; align-items: center; justify-content: center">2</span>
+        <span style="color: #666666">检查并修复</span>
+        <span style="color: #8C8C8C">→</span>
+        <span style="width: 30px; height: 30px; border-radius: 50%; background: #D4D4D4; color: #666666; display: flex; align-items: center; justify-content: center">3</span>
+        <span style="color: #666666">查看结果</span>
+      </div>
+
+      <div style="border: 2px dashed #D4D4D4; background: #F5F5F5; border-radius: 6px; padding: 26px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#545454" stroke-width="1.5" aria-hidden="true"><path d="M12 15V4"></path><path d="M7 9l5-5 5 5"></path><path d="M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"></path></svg>
+        <div style="font-size: 18px; font-weight: 500">把录像文件或整个文件夹拖到这里</div>
+        <div style="display: flex; gap: 10px; align-items: center; color: #666666">或
+          <button type="button" style="height: 44px; padding: 0 18px; border: 1px solid #545454; background: #FFFFFF; color: #545454; border-radius: 6px; font-size: 15px; cursor: pointer">选择文件</button>
+          <button type="button" style="height: 44px; padding: 0 18px; border: 1px solid #545454; background: #FFFFFF; color: #545454; border-radius: 6px; font-size: 15px; cursor: pointer">选择文件夹</button>
+        </div>
+      </div>
+
+      <div style="flex: 1; min-height: 0; border: 1px solid #D4D4D4; border-radius: 6px; overflow: hidden; display: flex; flex-direction: column">
+        <div style="padding: 10px 16px; background: #F5F5F5; color: #666666; font-size: 13px; border-bottom: 1px solid #D4D4D4">已放入 4 个文件 · 共 9.6 MB</div>
+        <sc-for list="{{queued}}" as="q" hint-placeholder-count="4">
+          <div style="display: flex; align-items: center; gap: 12px; padding: 9px 16px; border-bottom: 1px solid #F0F0F0">
+            <span style="font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size: 14px">{{q.name}}</span>
+            <span style="margin-left: auto; color: #666666; font-size: 13px">{{q.size}}</span>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="display: flex; justify-content: flex-end">
+        <button type="button" onClick="{{run}}" style="height: 52px; padding: 0 36px; border: 1px solid rgba(0,0,0,0.15); border-radius: 6px; background: #545454; color: #FFFFFF; font-size: 17px; font-weight: 600; cursor: pointer">检查并修复</button>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{isDone}}" hint-placeholder-val="{{ false }}">
+    <div style="flex: 1; display: flex; flex-direction: column; gap: 16px; padding: 24px 36px; box-sizing: border-box; min-height: 0">
+      <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap">
+        <span style="font-size: 20px; font-weight: 600">处理完成</span>
+        <span style="font-size: 14px; padding: 4px 10px; border-radius: 2em; background: #F0F0F0; color: #595959">正常 1</span>
+        <span style="font-size: 14px; padding: 4px 10px; border-radius: 2em; background: #F0F0F0; color: #383838">已修复 1</span>
+        <span style="font-size: 14px; padding: 4px 10px; border-radius: 2em; background: #F0F0F0; color: #545454">部分恢复 1</span>
+        <span style="font-size: 14px; padding: 4px 10px; border-radius: 2em; background: #E8E8E8; color: #1A1A1A">无法修复 1</span>
+      </div>
+
+      <div style="flex: 1; min-height: 0; border: 1px solid #D4D4D4; border-radius: 6px; overflow: hidden">
+        <sc-for list="{{results}}" as="r" hint-placeholder-count="4">
+          <div style="display: flex; align-items: center; gap: 14px; padding: 14px 18px; border-bottom: 1px solid #F0F0F0">
+            <span style="{{r.iconStyle}}" aria-hidden="true">{{r.icon}}</span>
+            <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0">
+              <span style="font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size: 14px">{{r.name}}</span>
+              <span style="font-size: 15px; color: {{r.color}}">{{r.text}}</span>
+            </div>
+            <button type="button" style="margin-left: auto; height: 32px; padding: 0 16px; border: 1px solid #D4D4D4; border-radius: 6px; background: #FFFFFF; font-size: 14px; cursor: pointer">{{r.action}}</button>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 16px; border-radius: 6px; background: #F5F5F5">
+        <span style="font-size: 14px; color: #666666">修复后的文件保存在</span>
+        <span style="font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size: 14px">D:\录像拷贝\已修复</span>
+        <span style="font-size: 13px; color: #666666">原文件未改动</span>
+        <span style="margin-left: auto; display: flex; gap: 10px">
+          <button type="button" onClick="{{reset}}" style="height: 44px; padding: 0 18px; border: 1px solid #D4D4D4; border-radius: 6px; background: #FFFFFF; font-size: 15px; cursor: pointer">再处理一批</button>
+          <button type="button" style="height: 44px; padding: 0 20px; border: 1px solid rgba(0,0,0,0.15); border-radius: 6px; background: #545454; color: #FFFFFF; font-size: 15px; font-weight: 600; cursor: pointer">打开文件夹</button>
+        </span>
+      </div>
+      <a href="#advanced" style="font-size: 13px; color: #666666">▸ 高级（技术人员查看日志）</a>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":640}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { step: 'drop' };
+  }
+  renderVals() {
+    const queued = [
+      { name: '014_095000.mp4', size: '2.3 MB' },
+      { name: '014_100000.mp4', size: '1.8 MB' },
+      { name: '021_083000.mp4', size: '2.6 MB' },
+      { name: '021_084500.mp4', size: '2.9 MB' }
+    ];
+    const icon = (bg, fg) => 'width: 32px; height: 32px; flex: none; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 16px; background: ' + bg + '; color: ' + fg;
+    const results = [
+      { name: '014_095000.mp4', icon: '✓', iconStyle: icon('#F0F0F0', '#595959'), text: '正常，不需要修复', color: '#595959', action: '预览' },
+      { name: '014_100000.mp4', icon: '✓', iconStyle: icon('#F0F0F0', '#383838'), text: '已修复，可以正常播放', color: '#383838', action: '预览' },
+      { name: '021_083000.mp4', icon: '!', iconStyle: icon('#F0F0F0', '#545454'), text: '部分恢复，缺少约 12 秒', color: '#545454', action: '预览' },
+      { name: '021_084500.mp4', icon: '✕', iconStyle: icon('#E8E8E8', '#1A1A1A'), text: '无法修复，文件内容已严重损坏', color: '#1A1A1A', action: '查看原因' }
+    ];
+    return {
+      queued, results,
+      isDrop: this.state.step === 'drop',
+      isDone: this.state.step === 'done',
+      run: () => this.setState({ step: 'done' }),
+      reset: () => this.setState({ step: 'drop' })
+    };
+  }
+}
+</script>
+</body>
+</html>
