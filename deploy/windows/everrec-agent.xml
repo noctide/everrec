@@ -1,0 +1,25 @@
+<!--
+  WinSW 服务定义（设计文档 4.1、14.1）。
+  把 WinSW-x64.exe 改名为 everrec-agent-service.exe，与本文件放在安装文件夹，然后以管理员运行：
+      everrec-agent-service.exe install
+  效果：开机自启、不依赖用户登录、异常退出 10 秒后自动拉起。
+-->
+<service>
+  <id>EverRecAgent</id>
+  <name>EverRec 录制服务</name>
+  <description>EverRec（恒录）操作区 24 小时录像</description>
+  <executable>%BASE%\everrec-agent.exe</executable>
+  <arguments>run -c "%BASE%\config\everrec.yaml"</arguments>
+  <workingdirectory>%BASE%</workingdirectory>
+  <startmode>Automatic</startmode>
+  <delayedAutoStart>false</delayedAutoStart>
+  <onfailure action="restart" delay="10 sec"/>
+  <onfailure action="restart" delay="30 sec"/>
+  <resetfailure>1 hour</resetfailure>
+  <stoptimeout>15 sec</stoptimeout>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>5</keepFiles>
+  </log>
+  <logpath>%BASE%\logs\service</logpath>
+</service>

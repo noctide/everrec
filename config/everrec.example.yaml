@@ -1,0 +1,27 @@
+# EverRec 客户端配置示例（设计文档 4.6）
+# 放在安装文件夹的 config/everrec.yaml，例如 D:\EverRec\config\everrec.yaml
+# 相对路径都相对安装文件夹。只有 Windows 管理员能改这个文件。
+
+server: https://everrec.hq.local      # 子公司填中转节点地址；留空则纯本地运行
+
+location:              # 只能用英文和数字，会进文件路径
+  state: HD            # 州
+  district: PD         # 区
+  building: A          # 楼栋
+  floor: 3F            # 楼层
+  number: "012"        # 编号
+# 位置编号自动生成：HD-PD-A-3F-012
+
+camera:
+  type: usb            # usb；开发自测可用 test（FFmpeg 内置测试画面）
+  device: ""           # Windows 填摄像头名称，Linux 填 /dev/video0；留空用默认
+
+recording:
+  profile: xlow        # xlow / low / mid
+  folder: recordings   # 默认在安装文件夹内
+  local_quota_gb: 20
+  watermark: true
+  segment_seconds: 300
+
+autostart: true
+heartbeat_seconds: 30

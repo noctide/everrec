@@ -1,0 +1,18 @@
+# systemd 单元（设计文档 14.4）
+# 安装：sudo cp everrec-server.service /etc/systemd/system/ && sudo systemctl enable --now everrec-server
+[Unit]
+Description=EverRec 服务端
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+User=everrec
+Group=everrec
+WorkingDirectory=/opt/everrec
+EnvironmentFile=/etc/everrec/server.env
+ExecStart=/opt/everrec/.venv/bin/everrec-server --host 127.0.0.1 --port 8080
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

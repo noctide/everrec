@@ -1,0 +1,19 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+
+# 前端
+web/node_modules/
+web/dist/
+
+# 本地运行产生的数据
+*.db
+recordings/
+logs/
+state/
+config/everrec.yaml

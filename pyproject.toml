@@ -1,0 +1,42 @@
+[project]
+name = "everrec"
+version = "0.1.0"
+description = "EverRec（恒录）录像系统 —— 工作区根"
+requires-python = ">=3.12"
+dependencies = [
+    "everrec-core",
+    "everrec-agent",
+    "everrec-server",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+everrec-core = { workspace = true }
+everrec-agent = { workspace = true }
+everrec-server = { workspace = true }
+
+[tool.pytest.ini_options]
+testpaths = ["packages"]
+addopts = "-q --import-mode=importlib"
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008"]  # FastAPI 的 Depends/Query 写在参数默认值里是惯用法
+
+[tool.ruff.lint.isort]
+known-first-party = ["everrec_core", "everrec_agent", "everrec_server"]

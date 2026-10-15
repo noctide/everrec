@@ -1,0 +1,27 @@
+[project]
+name = "everrec-server"
+version = "0.1.0"
+description = "EverRec 服务端：心跳、失联判定、设备状态 API"
+requires-python = ">=3.12"
+dependencies = [
+    "everrec-core",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "sqlalchemy>=2.0",
+]
+
+[project.optional-dependencies]
+postgres = ["psycopg[binary]>=3.2"]
+
+[project.scripts]
+everrec-server = "everrec_server.main:run"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/everrec_server"]
+
+[tool.uv.sources]
+everrec-core = { workspace = true }

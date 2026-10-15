@@ -1,0 +1,76 @@
+"""Agent 端到端：用测试画面真录。"""
+
+import subprocess
+import threading
+import time
+from pathlib import Path
+
+import pytest
+
+from everrec_agent.agent import Agent
+from everrec_core.config import AgentConfig, Camera, CameraType, Location, Recording
+from everrec_core.ffmpeg import ffmpeg_binary, spool_dir
+from everrec_core.segments import iter_archived, list_spool
+
+
+@pytest.fixture
+def cfg(tmp_path: Path) -> AgentConfig:
+    c = AgentConfig(
+        location=Location(state="HD", building="A", number="012"),
+        camera=Camera(type=CameraType.TEST),
+        recording=Recording(segment_seconds=2),
+        heartbeat_seconds=1,
+    )
+    c.install_dir = tmp_path
+    return c
+
+
+def _run_for(agent: Agent, seconds: float) -> list[bool]:
+    """跑一段时间，每秒记一次 agent.recording。"""
+    t = threading.Thread(target=agent.run, daemon=True)
+    t.start()
+    seen = []
+    for _ in range(int(seconds)):
+        time.sleep(1)
+        seen.append(agent.recording)
+    agent.stop_event.set()
+    t.join(30)
+    assert not t.is_alive()
+    return seen
+
+
+def test_records_offline_and_archives(cfg):
+    cfg.server = "http://127.0.0.1:9"  # 没人监听：模拟服务器不可用
+    agent = Agent(cfg)
+    seen = _run_for(agent, 9)
+    assert all(seen[5:]), f"启动几秒后应持续报告在录：{seen}"
+
+    archived = list(iter_archived(cfg.recordings_dir))
+    assert len(archived) >= 3, "连不上服务器也要照常录"
+    assert all("HD-A-012" in p.parts for p in archived)
+    assert list_spool(spool_dir(cfg)) == [], "停止时最后一段也要归档"
+    assert agent.online is False and agent.offline_since is not None
+    assert len(agent.index.entries()) == len(archived)
+
+
+def test_recovers_interrupted_segment_on_startup(cfg):
+    spool = spool_dir(cfg)
+    spool.mkdir(parents=True)
+    good = spool / "HD-A-012_20261015_090000.ts"
+    subprocess.run(
+        [ffmpeg_binary(), "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=5",
+         "-t", "6", "-c:v", "libx264", "-g", "10", "-f", "mpegts", str(good)],
+        check=True,
+    )
+    data = good.read_bytes()
+    broken = spool / "HD-A-012_20261015_090500.ts"
+    broken.write_bytes(data[: len(data) // 2 + 33])  # 断电：截在半个包上
+
+    Agent(cfg).recover_spool()
+
+    archived = sorted(p.name for p in iter_archived(cfg.recordings_dir))
+    assert archived == ["HD-A-012_090000.ts", "HD-A-012_090500.ts"]
+    assert (cfg.recordings_dir / "_quarantine" / broken.name).exists(), "原文件进隔离目录保留"
+    integrities = {Path(e.path).name: e.integrity for e in Agent(cfg).index.entries()}
+    assert integrities["HD-A-012_090000.ts"] == "ok"
+    assert integrities["HD-A-012_090500.ts"] in ("repaired", "partial")
