@@ -23,7 +23,7 @@ import httpx
 
 from everrec_core import repair
 from everrec_core.config import AgentConfig
-from everrec_core.ffmpeg import spool_dir
+from everrec_core.ffmpeg import camera_device, effective_encoding, list_camera_modes, spool_dir
 from everrec_core.health import Check, GrowthWatcher, storage_check
 from everrec_core.protocol import Checks, Heartbeat, HeartbeatReply
 from everrec_core.segments import archive_segment, enforce_quota, list_spool
@@ -53,6 +53,9 @@ class Agent:
         self._last_hb = 0.0
         self._hb_thread: threading.Thread | None = None
         self.stop_event = threading.Event()
+        self._encoding_label = cfg.recording.encoding.label
+        self._encoding_note: str | None = None
+        self._camera_resolutions: list[str] = []
 
     # ---------- 启动 ----------
 
@@ -87,6 +90,21 @@ class Agent:
         if res.output:
             fixed = type(seg)(res.output, seg.code, seg.started_at)
             self._archive(fixed, res.integrity)
+
+    def _probe_camera(self) -> None:
+        """记下实际录制画质和摄像头支持的分辨率（心跳上报，设置页据此置灰挡位）。"""
+        try:
+            enc, mode, note = effective_encoding(self.cfg)
+            modes = list_camera_modes(camera_device(self.cfg))
+        except Exception as e:  # 探测失败不影响录制
+            log.warning("读取摄像头支持的格式失败：%s", e)
+            return
+        self._encoding_label, self._encoding_note = enc.label, note
+        self._camera_resolutions = sorted({m.size for m in modes}, key=lambda x: int(x.split("x")[1]))
+        src = f"（取流格式 {mode.size} {mode.codec or mode.pixel_format}）" if mode else ""
+        log.info("录制画质：%s%s", enc.label, src)
+        if note:
+            log.warning(note)
 
     # ---------- 每一轮 ----------
 
@@ -136,6 +154,11 @@ class Agent:
         if self.recorder.device_error:
             problems.append(f"摄像头异常：{self.recorder.device_error}")
 
+        # 配置写错、摄像头达不到设定分辨率：不影响录制，但要让管理员看到
+        problems.extend(self.cfg.config_warnings)
+        if self._encoding_note:
+            problems.append(self._encoding_note)
+
         storage, smsg, self.disk_used = storage_check(
             self.cfg.recordings_dir, self.cfg.recording.disk_usage_limit
         )
@@ -172,7 +195,8 @@ class Agent:
             sent_at=datetime.now().astimezone(),
             recording=self.recording,
             starting=self.starting,
-            profile=str(self.cfg.recording.profile),
+            profile=self._encoding_label,
+            camera_resolutions=self._camera_resolutions,
             current_segment=self.watcher.current_segment,
             checks=self.checks,
             problems=self.problems,
@@ -228,6 +252,9 @@ class Agent:
         log.info("EverRec Agent %s 启动，位置编号 %s，录像目录 %s，错峰偏移 %d 秒",
                  __version__, self.cfg.code, self.cfg.recordings_dir, self.cfg.stagger_seconds)
         child_guard.kill_orphans(spool_dir(self.cfg))  # 先放出摄像头，再处理上次留下的文件
+        for w in self.cfg.config_warnings:
+            log.warning("配置文件有误：%s", w)
+        self._probe_camera()
         self.recover_spool()
         self.recorder.start()
         self.watcher.reset()

@@ -17,7 +17,11 @@ camera:
   device: ""           # Windows 填摄像头名称，Linux 填 /dev/video0；留空用默认
 
 recording:
-  profile: xlow        # xlow / low / mid
+  quality: standard    # 画质：saver 省空间 / lean 偏省 / standard 标准（推荐，720P 10 帧）/ sharp 偏清晰 / max 清晰
+  # 高级（一般不用填，填了就覆盖上面的画质）：
+  # resolution: 720p   # 360p / 480p / 720p / 1080p
+  # fps: 10            # 5 / 8 / 10 / 12 / 15
+  # 码率不用填，按分辨率和帧率自动算。写错的值会自动改回默认并在管理网站上提示，不会停录。
   folder: recordings   # 默认在安装文件夹内
   local_quota_gb: 20
   watermark: true

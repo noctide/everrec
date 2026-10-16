@@ -31,7 +31,10 @@ class Heartbeat(BaseModel):
     sent_at: datetime
     recording: bool
     starting: bool = Field(default=False, description="刚（重新）启动录制，还在宽限期内，文件尚未写出数据")
-    profile: str
+    profile: str = Field(description="实际录制的画质，给人看的写法，例如 720P / 10 帧")
+    camera_resolutions: list[str] = Field(
+        default=[], description="摄像头支持的分辨率，例如 1280x720；设置页据此把达不到的挡位置灰"
+    )
     current_segment: str | None = None
     checks: Checks = Checks()
     problems: list[str] = []

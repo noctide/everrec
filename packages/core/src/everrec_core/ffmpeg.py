@@ -13,11 +13,12 @@ import re
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 
 from .config import AgentConfig, CameraType
-from .profiles import get_profile
+from .profiles import RESOLUTION_SIZE, Encoding
 
 SPOOL_DIRNAME = "_spool"
 SEGMENT_EXT = ".ts"
@@ -70,28 +71,122 @@ def list_cameras() -> list[str]:
     return sorted(str(p) for p in Path("/dev").glob("video*"))
 
 
+@dataclass(frozen=True)
+class CameraMode:
+    """摄像头能输出的一种格式。codec 为 mjpeg 时用 -vcodec，否则 pixel_format 用 -pixel_format。"""
+
+    codec: str | None
+    pixel_format: str | None
+    width: int
+    height: int
+    max_fps: float
+
+    @property
+    def size(self) -> str:
+        return f"{self.width}x{self.height}"
+
+
+_DSHOW_MODE = re.compile(
+    r"(?:vcodec=(?P<codec>\w+)|pixel_format=(?P<pf>\w+))\s+"
+    r"min s=\d+x\d+ fps=[\d.]+\s+max s=(?P<w>\d+)x(?P<h>\d+) fps=(?P<fps>[\d.]+)"
+)
+
+
+def parse_dshow_modes(stderr: str) -> list[CameraMode]:
+    """解析 `ffmpeg -f dshow -list_options true -i video=<名称>` 的输出。"""
+    modes = {
+        CameraMode(m["codec"], m["pf"], int(m["w"]), int(m["h"]), float(m["fps"]))
+        for m in _DSHOW_MODE.finditer(stderr)
+    }
+    return sorted(modes, key=lambda x: (x.width * x.height, x.max_fps, x.codec or ""))
+
+
+@cache
+def list_camera_modes(device: str) -> tuple[CameraMode, ...]:
+    """摄像头支持的输出格式（目前只在 Windows 上探测）。"""
+    if sys.platform != "win32" or not device:
+        return ()
+    r = subprocess.run(
+        [ffmpeg_binary(), "-hide_banner", "-f", "dshow", "-list_options", "true", "-i", f"video={device}"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    return tuple(parse_dshow_modes(r.stderr))
+
+
+def choose_mode(modes: list[CameraMode] | tuple[CameraMode, ...], enc: Encoding) -> CameraMode | None:
+    """挑一个摄像头格式去取流。
+
+    - 有和目标一样大的就用它；多个时优先帧率够的，再优先 MJPEG（USB2 下 MJPEG 高分辨率帧率更高）。
+    - 没有一样大的，就挑宽和高都够的里面最小的（缩小画面不损失清晰度；
+      只看高度会选到 640x480 这种 4:3 的，录出来两侧有黑边）。
+    - 摄像头最大也比目标小，就用最大的（见 effective_encoding，会把录制分辨率降下来，不做无意义的放大）。
+    """
+    if not modes:
+        return None
+
+    def rank(m: CameraMode):
+        return (m.max_fps >= enc.fps, m.codec == "mjpeg", m.max_fps)
+
+    same = [m for m in modes if (m.width, m.height) == (enc.width, enc.height)]
+    if same:
+        return max(same, key=rank)
+    bigger = [m for m in modes if m.width >= enc.width and m.height >= enc.height]
+    if bigger:
+        smallest = min(m.width * m.height for m in bigger)
+        return max((m for m in bigger if m.width * m.height == smallest), key=rank)
+    largest = max(m.width * m.height for m in modes)
+    return max((m for m in modes if m.width * m.height == largest), key=rank)
+
+
+def camera_device(cfg: AgentConfig) -> str:
+    if cfg.camera.type != CameraType.USB:
+        return ""
+    if sys.platform == "win32":
+        return cfg.camera.device or next(iter(list_cameras()), "")
+    return cfg.camera.device or "/dev/video0"
+
+
+def effective_encoding(cfg: AgentConfig) -> tuple[Encoding, CameraMode | None, str | None]:
+    """实际录制用的参数、取流格式，以及需要提醒的话（摄像头达不到设定分辨率时）。"""
+    enc = cfg.recording.encoding
+    modes = list_camera_modes(camera_device(cfg)) if cfg.camera.type == CameraType.USB else ()
+    mode = choose_mode(modes, enc)
+    if mode and mode.height < enc.height:
+        fit = [r for r, (_w, h) in RESOLUTION_SIZE.items() if h <= mode.height]
+        if fit:
+            capped = Encoding(max(fit, key=lambda r: RESOLUTION_SIZE[r][1]), enc.fps)
+            note = f"摄像头最高只有 {mode.size}，已按 {capped.label} 录制"
+            return capped, mode, note
+    return enc, mode, None
+
+
 def spool_dir(cfg: AgentConfig) -> Path:
     """正在写的分段放这里；写完后归档到 {位置编号}/{yyyy}/{MM}/{dd}/。"""
     return cfg.recordings_dir / SPOOL_DIRNAME
 
 
-def _input_args(cfg: AgentConfig) -> list[str]:
-    p = get_profile(cfg.recording.profile)
+def _input_args(cfg: AgentConfig, enc: Encoding, mode: CameraMode | None) -> list[str]:
     cam = cfg.camera
     if cam.type == CameraType.TEST:
-        return ["-re", "-f", "lavfi", "-i", f"testsrc2=size={p.width}x{p.height}:rate={p.fps}"]
+        return ["-re", "-f", "lavfi", "-i", f"testsrc2=size={enc.width}x{enc.height}:rate={enc.fps}"]
     if cam.type == CameraType.USB:
+        device = camera_device(cfg)
         if sys.platform == "win32":
-            name = cam.device or next(iter(list_cameras()), "")
-            if not name:
+            if not device:
                 raise RuntimeError("没找到摄像头：设备管理器里有没有？隐私设置里是否允许桌面应用访问相机？")
-            return ["-f", "dshow", "-rtbufsize", "64M", "-i", f"video={name}"]
-        return ["-f", "v4l2", "-i", cam.device or "/dev/video0"]
+            # 不指定格式时摄像头按自己的默认格式出图（常见 640x480），设成 720P 也只是放大
+            fmt: list[str] = []
+            if mode:
+                fmt = ["-video_size", mode.size]
+                fmt += ["-vcodec", "mjpeg"] if mode.codec == "mjpeg" else (
+                    ["-pixel_format", mode.pixel_format] if mode.pixel_format else [])
+            return ["-f", "dshow", "-rtbufsize", "128M", *fmt, "-i", f"video={device}"]
+        return ["-f", "v4l2", "-i", device]
     raise ValueError(f"第一版不支持的摄像头类型：{cam.type}")
 
 
-def _video_filter(cfg: AgentConfig) -> str:
-    p = get_profile(cfg.recording.profile)
+def _video_filter(cfg: AgentConfig, p: Encoding) -> str:
     chain = [
         f"scale={p.width}:{p.height}:force_original_aspect_ratio=decrease",
         f"pad={p.width}:{p.height}:(ow-iw)/2:(oh-ih)/2",
@@ -103,21 +198,21 @@ def _video_filter(cfg: AgentConfig) -> str:
         # %{localtime} 默认格式就是 YYYY-MM-DD HH:MM:SS，免去冒号转义
         chain.append(
             "drawtext=text='" + cfg.code + "  %{localtime}'"
-            ":x=8:y=8:fontsize=14:fontcolor=white:box=1:boxcolor=black@0.5" + font
+            f":x=8:y=8:fontsize={max(14, p.height // 28)}:fontcolor=white:box=1:boxcolor=black@0.5" + font
         )
     return ",".join(chain)
 
 
 def build_record_command(cfg: AgentConfig) -> list[str]:
-    p = get_profile(cfg.recording.profile)
+    p, mode, _note = effective_encoding(cfg)
     seg = cfg.recording.segment_seconds
     gop = min(10, seg)  # 关键帧间隔（秒）
     out = spool_dir(cfg) / f"{cfg.code}_%Y%m%d_%H%M%S{SEGMENT_EXT}"
     return [
         ffmpeg_binary(),
         "-hide_banner", "-loglevel", "warning", "-y",
-        *_input_args(cfg),
-        "-vf", _video_filter(cfg),
+        *_input_args(cfg, p, mode),
+        "-vf", _video_filter(cfg, p),
         "-an",
         "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
         "-crf", str(p.crf), "-maxrate", f"{p.maxrate_kbps}k", "-bufsize", f"{p.bufsize_kbps}k",

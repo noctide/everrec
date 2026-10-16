@@ -12,9 +12,9 @@ from enum import StrEnum
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
-from .profiles import ProfileName
+from .profiles import DEFAULT_QUALITY, FPS_STOPS, LEGACY_PROFILE, Encoding, Quality, Resolution, resolve
 
 CODE_PART = re.compile(r"^[A-Za-z0-9]+$")
 
@@ -53,12 +53,37 @@ class Camera(BaseModel):
 
 
 class Recording(BaseModel):
-    profile: ProfileName = ProfileName.XLOW
+    quality: Quality = Field(default=DEFAULT_QUALITY, description="画质挡：saver/lean/standard/sharp/max")
+    resolution: Resolution | None = Field(
+        default=None, description="高级：360p/480p/720p/1080p，填了就覆盖画质挡"
+    )
+    fps: int | None = Field(default=None, description=f"高级：帧率 {FPS_STOPS}，填了就覆盖画质挡")
     folder: str = "recordings"
     local_quota_gb: float = 20
     disk_usage_limit: float = 0.85
     watermark: bool = True
     segment_seconds: int = Field(default=300, ge=2, le=3600)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_profile(cls, data):
+        """旧配置的 profile: xlow/low/mid 自动换成画质挡。"""
+        if isinstance(data, dict) and "profile" in data:
+            data = dict(data)
+            old = str(data.pop("profile"))
+            data.setdefault("quality", LEGACY_PROFILE.get(old, DEFAULT_QUALITY).value)
+        return data
+
+    @field_validator("fps")
+    @classmethod
+    def _fps_stop(cls, v: int | None) -> int | None:
+        if v is not None and v not in FPS_STOPS:
+            raise ValueError(f"帧率只能是 {FPS_STOPS} 之一")
+        return v
+
+    @property
+    def encoding(self) -> Encoding:
+        return resolve(self.quality, self.resolution, self.fps)
 
 
 class AgentConfig(BaseModel):
@@ -71,6 +96,7 @@ class AgentConfig(BaseModel):
 
     # 不写进文件，加载时填入
     install_dir: Path = Field(default=Path("."), exclude=True)
+    config_warnings: list[str] = Field(default_factory=list, exclude=True)
 
     @property
     def code(self) -> str:
@@ -97,10 +123,49 @@ class AgentConfig(BaseModel):
         return h % self.recording.segment_seconds
 
 
+def _drop(data: dict, loc: tuple) -> bool:
+    """按 pydantic 报错的位置删掉那一项，让它回到默认值。"""
+    node = data
+    for key in loc[:-1]:
+        if not isinstance(node, dict) or key not in node:
+            return False
+        node = node[key]
+    if isinstance(node, dict) and loc and loc[-1] in node:
+        del node[loc[-1]]
+        return True
+    return False
+
+
+def validate_tolerant(data: dict) -> tuple[AgentConfig, list[str]]:
+    """配置写错不能导致停录：写错的项回到默认值，并给出给人看的提示。"""
+    warnings: list[str] = []
+    data = data if isinstance(data, dict) else {}
+    for _ in range(50):
+        try:
+            return AgentConfig.model_validate(data), warnings
+        except ValidationError as e:
+            progressed = False
+            for err in e.errors():
+                loc = tuple(err["loc"])
+                where = ".".join(str(x) for x in loc) or "（整个文件）"
+                value = err.get("input")
+                if _drop(data, loc) or (len(loc) > 1 and _drop(data, loc[:1])):
+                    warnings.append(f"配置项 {where} 的值 {value!r} 无效，已改用默认值")
+                    progressed = True
+            if not progressed:
+                break
+    warnings.append("配置文件无法识别，已全部改用默认值")
+    return AgentConfig(), warnings
+
+
 def load_config(path: str | Path) -> AgentConfig:
     path = Path(path).resolve()
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    cfg = AgentConfig.model_validate(data)
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        cfg, warnings = validate_tolerant(data)
+    except yaml.YAMLError as e:
+        cfg, warnings = AgentConfig(), [f"配置文件格式错误（{e.__class__.__name__}），已全部改用默认值"]
+    cfg.config_warnings = warnings
     # config/everrec.yaml → 安装文件夹是它的上两级
     cfg.install_dir = path.parent.parent if path.parent.name == "config" else path.parent
     return cfg

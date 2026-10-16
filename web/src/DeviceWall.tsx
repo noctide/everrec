@@ -150,7 +150,7 @@ export default function DeviceWall() {
             <dl>
               <dt>状态</dt><dd>{STATUS_TEXT[open.status]}</dd>
               <dt>电脑</dt><dd>{open.hostname} · Agent {open.version}</dd>
-              <dt>档位</dt><dd>{open.profile}</dd>
+              <dt>画质</dt><dd>{open.profile}</dd>
               <dt>检查</dt>
               <dd>
                 {Object.entries(open.checks)

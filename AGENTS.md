@@ -17,7 +17,8 @@ Linux 服务器上的管理网站统一看每台电脑是不是在正常录像�
 | 事项 | 结论 |
 | --- | --- |
 | 推送渠道 | **不做企业微信、不做钉钉**。第一版只做通用 JSON 推送（带 HMAC 签名），接收方后定 |
-| 码率档位 | **未定**。Leo 实测认为默认 xlow（640×360 / 5fps / 64kbps）不够，正在对比 low / mid。不要改默认档位，等他拍板 |
+| 画质 | **已定**：默认 720P / 10 帧。取代设计文档 4.4 的三档：画质 = 分辨率挡（360P / 480P / 720P / 1080P，不做 4K）+ 帧率挡（5 / 8 / 10 / 12 / 15），**码率不开放，按分辨率和帧率自动算**。定义只在 `core/profiles.py`，界面规格见 `docs/tasks.md` WP4 |
+| 容量 | 设计文档第 13 节按 30 MB/小时算的容量已作废；720P / 10 帧上限约 290 MB/小时，实际占用待 Leo 实测后重算，服务器硬盘规格未定 |
 | 服务端平台 | Linux（不是 Windows） |
 | 实测环境 | Leo 的 Windows 笔记本（自带摄像头 "BisonCam,NB Pro"，走 dshow）；现场 USB 摄像头暂时测不了 |
 
@@ -93,6 +94,8 @@ cd web && npm install && npm run build    # 必须通过 tsc 和 vite build
 | `agent/single_instance.py` | 普通用户在交互会话里可能无权创建 `Global\` 互斥锁 | 失败时退回 `Local\` |
 | `agent/recorder.py` | 笔记本摄像头输出 MJPEG，每次启动都打 `deprecated pixel format used` | 已列为无害提示（`HARMLESS_HINTS`），只记调试日志，不上报 |
 | dshow 设备名 | 名称可能含逗号，如 `BisonCam,NB Pro` | 原样传 `video=<名称>`，不要按逗号切分 |
+| `core/ffmpeg.py` | dshow 不指定格式时摄像头按自己的默认格式出图（常见 640×480），设成 720P 也只是放大 | 先探测摄像头支持的格式（`list_camera_modes`），按 `choose_mode` 选宽高都够的最小格式并传 `-video_size`；摄像头达不到时降低录制分辨率并提示，不做放大 |
+| `core/config.py` | 配置文件写错一个值，程序启动即报错，录像停了 | `load_config` 容错：写错的项回到默认值，警告写日志并随心跳上报，设备墙可见 |
 | 测试 | Windows 上摄像头和 FFmpeg 启动比 Linux 慢 | 测试里不写死"第几秒开始在录"，只断言"录上了且之后不掉线" |
 
 ## 9. Windows 相关改动的验证
@@ -115,5 +118,6 @@ Leo 的 Windows 测试目录：仓库在 `D:\05_project\08_everrec\everrec`，�
 
 ## 11. 当前进度
 
-第一版主线已打通：录制 → 健康检查 → 心跳 → 失联判定 → 设备墙；Windows 上已实测录制、自动找摄像头、正常停止、FFmpeg 崩溃自动重启。
+第一版主线已打通：录制 → 健康检查 → 心跳 → 失联判定 → 设备墙；Windows 上已实测：录制、自动找摄像头、正常停止、FFmpeg 被结束后自动重启、Agent 被强制结束后 FFmpeg 跟着退出（摄像头灯灭）。
+画质改为分辨率 + 帧率挡后的摄像头取流（`-video_size` / MJPEG）尚待 Windows 实测。
 剩余工作和顺序见 [`docs/tasks.md`](docs/tasks.md)。

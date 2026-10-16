@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 from everrec_core.config import AgentConfig, load_config, save_config
-from everrec_core.ffmpeg import build_record_command, list_cameras
+from everrec_core.ffmpeg import build_record_command, list_camera_modes, list_cameras
 
 from .agent import Agent
 from .logs import setup_logging
@@ -57,6 +57,8 @@ def cmd_cameras(_args: argparse.Namespace) -> int:
     print("找到的摄像头（把名称填到配置文件的 camera.device）：")
     for c in cams:
         print(f"  {c}")
+        for m in list_camera_modes(c):
+            print(f"      {m.size:>10}  最高 {m.max_fps:g} 帧  {m.codec or m.pixel_format}")
     return 0
 
 

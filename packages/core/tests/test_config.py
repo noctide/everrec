@@ -39,7 +39,7 @@ def test_stagger_is_stable_and_in_range():
 def test_command_has_stagger_and_ratecap(test_cfg):
     cmd = build_record_command(test_cfg)
     assert cmd[cmd.index("-segment_clocktime_offset") + 1] == str(test_cfg.stagger_seconds)
-    assert cmd[cmd.index("-maxrate") + 1] == "64k"
+    assert cmd[cmd.index("-maxrate") + 1] == f"{test_cfg.recording.encoding.maxrate_kbps}k"
     assert "-an" in cmd
 
 
