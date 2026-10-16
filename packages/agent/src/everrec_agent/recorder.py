@@ -10,6 +10,8 @@ import time
 from everrec_core.config import AgentConfig
 from everrec_core.ffmpeg import build_record_command, spool_dir
 
+from . import child_guard
+
 log = logging.getLogger("recorder")
 
 # 摄像头打不开、被占用、权限被关时 FFmpeg 的典型报错（健康检查 ②）
@@ -62,7 +64,9 @@ class Recorder:
                 encoding="utf-8",
                 errors="replace",
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                preexec_fn=child_guard.preexec_fn(),
             )
+            child_guard.attach(self.proc)  # Agent 被强制结束时 FFmpeg 跟着结束
             threading.Thread(target=self._pump_stderr, args=(self.proc,), daemon=True).start()
 
     def _pump_stderr(self, proc: subprocess.Popen[str]) -> None:

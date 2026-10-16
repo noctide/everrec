@@ -17,6 +17,7 @@ import platform
 import threading
 import time
 from datetime import datetime
+from pathlib import Path
 
 import httpx
 
@@ -27,7 +28,7 @@ from everrec_core.health import Check, GrowthWatcher, storage_check
 from everrec_core.protocol import Checks, Heartbeat, HeartbeatReply
 from everrec_core.segments import archive_segment, enforce_quota, list_spool
 
-from . import __version__
+from . import __version__, child_guard
 from .index import IndexEntry, SegmentIndex
 from .logs import RecentProblems
 from .recorder import Recorder
@@ -63,20 +64,29 @@ class Agent:
         log.info("发现 %d 个上次中断留下的分段，检查并修复", len(leftovers))
         quarantine = self.cfg.recordings_dir / "_quarantine"
         for seg in leftovers:
-            if seg.path.stat().st_size == 0:
-                seg.path.unlink()
-                continue
-            fixed_dir = spool_dir(self.cfg) / "_fixed"
-            res = repair.repair_file(seg.path, fixed_dir)
-            if res.integrity == repair.Integrity.OK:
-                self._archive(seg, res.integrity)
-                continue
-            log.warning("分段 %s：%s（方法 %s）", seg.path.name, res.friendly, res.method)
-            quarantine.mkdir(parents=True, exist_ok=True)
-            seg.path.replace(quarantine / seg.path.name)  # 原文件进隔离目录，不删除
-            if res.output:
-                fixed = type(seg)(res.output, seg.code, seg.started_at)
-                self._archive(fixed, res.integrity)
+            try:
+                self._recover_one(seg, quarantine)
+            except PermissionError:
+                # 还被别的进程占着（例如没清掉的残留 FFmpeg）：先跳过，下次启动再处理
+                log.warning("分段 %s 正被其他程序占用，暂不处理", seg.path.name)
+            except Exception:
+                log.exception("处理中断分段 %s 失败，保留原文件", seg.path.name)
+
+    def _recover_one(self, seg, quarantine: Path) -> None:
+        if seg.path.stat().st_size == 0:
+            seg.path.unlink()
+            return
+        fixed_dir = spool_dir(self.cfg) / "_fixed"
+        res = repair.repair_file(seg.path, fixed_dir)
+        if res.integrity == repair.Integrity.OK:
+            self._archive(seg, res.integrity)
+            return
+        log.warning("分段 %s：%s（方法 %s）", seg.path.name, res.friendly, res.method)
+        quarantine.mkdir(parents=True, exist_ok=True)
+        seg.path.replace(quarantine / seg.path.name)  # 原文件进隔离目录，不删除
+        if res.output:
+            fixed = type(seg)(res.output, seg.code, seg.started_at)
+            self._archive(fixed, res.integrity)
 
     # ---------- 每一轮 ----------
 
@@ -217,6 +227,7 @@ class Agent:
     def run(self) -> None:
         log.info("EverRec Agent %s 启动，位置编号 %s，录像目录 %s，错峰偏移 %d 秒",
                  __version__, self.cfg.code, self.cfg.recordings_dir, self.cfg.stagger_seconds)
+        child_guard.kill_orphans(spool_dir(self.cfg))  # 先放出摄像头，再处理上次留下的文件
         self.recover_spool()
         self.recorder.start()
         self.watcher.reset()
