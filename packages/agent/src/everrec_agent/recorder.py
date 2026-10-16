@@ -24,6 +24,12 @@ DEVICE_ERROR_HINTS = (
 )
 
 
+# 无害的提示：只记调试日志，不当成警告报给服务器
+HARMLESS_HINTS = (
+    "deprecated pixel format used",  # 摄像头输出 MJPEG(yuvj) 时的颜色范围提示
+)
+
+
 class Recorder:
     def __init__(self, cfg: AgentConfig):
         self.cfg = cfg
@@ -67,6 +73,9 @@ class Recorder:
                 continue
             self._stderr_tail = (self._stderr_tail + [line])[-20:]
             low = line.lower()
+            if any(h in low for h in HARMLESS_HINTS):
+                log.debug("ffmpeg: %s", line)
+                continue
             if any(h in low for h in DEVICE_ERROR_HINTS):
                 self.device_error = line
             log.warning("ffmpeg: %s", line)
