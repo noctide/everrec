@@ -98,8 +98,8 @@ def _video_filter(cfg: AgentConfig) -> str:
         f"fps={p.fps}",
     ]
     if cfg.recording.watermark:
-        # 盘符里的冒号必须转义，否则会被当成参数分隔符
-        font = r":fontfile=C\:/Windows/Fonts/arial.ttf" if sys.platform == "win32" else ""
+        # 盘符冒号既要加引号又要转义：Windows 实测只有这种写法稳定（Linux 上测不出差别）
+        font = r":fontfile='C\:/Windows/Fonts/arial.ttf'" if sys.platform == "win32" else ""
         # %{localtime} 默认格式就是 YYYY-MM-DD HH:MM:SS，免去冒号转义
         chain.append(
             "drawtext=text='" + cfg.code + "  %{localtime}'"

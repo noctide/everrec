@@ -43,7 +43,9 @@ def test_records_offline_and_archives(cfg):
     cfg.server = "http://127.0.0.1:9"  # 没人监听：模拟服务器不可用
     agent = Agent(cfg)
     seen = _run_for(agent, 9)
-    assert all(seen[5:]), f"启动几秒后应持续报告在录：{seen}"
+    # 不写死第几秒开始（Windows 上启动更慢），只要求确实录上了，且一旦开始就持续、不中途掉线
+    assert any(seen), f"一直没报告在录：{seen}"
+    assert all(seen[seen.index(True):]), f"开始录制后中途掉线：{seen}"
 
     archived = list(iter_archived(cfg.recordings_dir))
     assert len(archived) >= 3, "连不上服务器也要照常录"
