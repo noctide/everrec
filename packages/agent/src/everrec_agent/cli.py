@@ -34,8 +34,17 @@ def cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _load(path: str) -> AgentConfig | None:
+    if not Path(path).exists():
+        install_dir = Path(path).parent.parent
+        print(f"找不到配置文件：{path}\n先生成一份：everrec-agent init {install_dir}", file=sys.stderr)
+        return None
+    return load_config(path)
+
+
 def cmd_show(args: argparse.Namespace) -> int:
-    cfg = load_config(args.config)
+    if (cfg := _load(args.config)) is None:
+        return 1
     print(" ".join(f'"{a}"' if " " in a else a for a in build_record_command(cfg)))
     return 0
 
@@ -52,7 +61,8 @@ def cmd_cameras(_args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    cfg = load_config(args.config)
+    if (cfg := _load(args.config)) is None:
+        return 1
     recent = setup_logging(cfg.logs_dir, args.verbose)
     try:
         with SingleInstance(cfg.state_dir):
