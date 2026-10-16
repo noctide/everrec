@@ -51,6 +51,11 @@ def test_records_offline_and_archives(cfg):
     assert list_spool(spool_dir(cfg)) == [], "停止时最后一段也要归档"
     assert agent.online is False and agent.offline_since is not None
     assert len(agent.index.entries()) == len(archived)
+    # 正常停止（给 FFmpeg 发 q）时最后一段也是完好的，不需要修复
+    from everrec_core.repair import inspect
+    last = archived[-1]
+    assert inspect(last).healthy, last
+    assert not (cfg.recordings_dir / "_quarantine").exists()
 
 
 def test_recovers_interrupted_segment_on_startup(cfg):

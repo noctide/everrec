@@ -9,8 +9,11 @@
 
 from __future__ import annotations
 
+import re
 import shutil
+import subprocess
 import sys
+from functools import cache
 from pathlib import Path
 
 from .config import AgentConfig, CameraType
@@ -31,6 +34,42 @@ def ffmpeg_binary() -> str:
     return found
 
 
+_DSHOW_VIDEO = re.compile(r'"(?P<name>[^"]+)"\s*\(video\)')
+
+
+def parse_dshow_devices(stderr: str) -> list[str]:
+    """从 `ffmpeg -list_devices true -f dshow -i dummy` 的输出里取视频设备名。
+
+    兼容两种格式：新版每行带 (video)；旧版先出现 "DirectShow video devices" 标题，再逐行列出。
+    """
+    names = [m["name"] for m in _DSHOW_VIDEO.finditer(stderr)]
+    if names:
+        return names
+    out, in_video = [], False
+    for line in stderr.splitlines():
+        low = line.lower()
+        if "directshow video devices" in low:
+            in_video = True
+        elif "directshow audio devices" in low:
+            in_video = False
+        elif in_video and "alternative name" not in low and (m := re.search(r'"([^"]+)"', line)):
+            out.append(m.group(1))
+    return out
+
+
+@cache
+def list_cameras() -> list[str]:
+    """本机的摄像头名称（Windows dshow）或设备路径（Linux v4l2）。"""
+    if sys.platform == "win32":
+        r = subprocess.run(
+            [ffmpeg_binary(), "-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        return parse_dshow_devices(r.stderr)
+    return sorted(str(p) for p in Path("/dev").glob("video*"))
+
+
 def spool_dir(cfg: AgentConfig) -> Path:
     """正在写的分段放这里；写完后归档到 {位置编号}/{yyyy}/{MM}/{dd}/。"""
     return cfg.recordings_dir / SPOOL_DIRNAME
@@ -43,7 +82,9 @@ def _input_args(cfg: AgentConfig) -> list[str]:
         return ["-re", "-f", "lavfi", "-i", f"testsrc2=size={p.width}x{p.height}:rate={p.fps}"]
     if cam.type == CameraType.USB:
         if sys.platform == "win32":
-            name = cam.device or "USB Camera"
+            name = cam.device or next(iter(list_cameras()), "")
+            if not name:
+                raise RuntimeError("没找到摄像头：设备管理器里有没有？隐私设置里是否允许桌面应用访问相机？")
             return ["-f", "dshow", "-rtbufsize", "64M", "-i", f"video={name}"]
         return ["-f", "v4l2", "-i", cam.device or "/dev/video0"]
     raise ValueError(f"第一版不支持的摄像头类型：{cam.type}")
@@ -57,7 +98,8 @@ def _video_filter(cfg: AgentConfig) -> str:
         f"fps={p.fps}",
     ]
     if cfg.recording.watermark:
-        font = ":fontfile='C:/Windows/Fonts/arial.ttf'" if sys.platform == "win32" else ""
+        # 盘符里的冒号必须转义，否则会被当成参数分隔符
+        font = r":fontfile=C\:/Windows/Fonts/arial.ttf" if sys.platform == "win32" else ""
         # %{localtime} 默认格式就是 YYYY-MM-DD HH:MM:SS，免去冒号转义
         chain.append(
             "drawtext=text='" + cfg.code + "  %{localtime}'"
@@ -73,7 +115,7 @@ def build_record_command(cfg: AgentConfig) -> list[str]:
     out = spool_dir(cfg) / f"{cfg.code}_%Y%m%d_%H%M%S{SEGMENT_EXT}"
     return [
         ffmpeg_binary(),
-        "-hide_banner", "-nostdin", "-loglevel", "warning", "-y",
+        "-hide_banner", "-loglevel", "warning", "-y",
         *_input_args(cfg),
         "-vf", _video_filter(cfg),
         "-an",

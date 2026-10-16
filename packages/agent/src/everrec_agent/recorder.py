@@ -49,7 +49,7 @@ class Recorder:
             self._stderr_tail = []
             self.proc = subprocess.Popen(
                 cmd,
-                stdin=subprocess.DEVNULL,
+                stdin=subprocess.PIPE,  # 停止时写入 q，让 FFmpeg 正常收尾
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -77,10 +77,18 @@ class Recorder:
             p, self.proc = self.proc, None
         if p is None or p.poll() is not None:
             return
-        p.terminate()  # FFmpeg 收到 SIGTERM/CTRL_BREAK 会正常写完当前分段
+        # 发 q 是各平台通用的正常停止方式；Windows 上 terminate() 等于强杀，当前分段会坏
+        try:
+            assert p.stdin is not None
+            p.stdin.write("q")
+            p.stdin.flush()
+            p.stdin.close()
+        except (OSError, ValueError):
+            pass
         try:
             p.wait(timeout)
         except subprocess.TimeoutExpired:
+            log.warning("FFmpeg 没有按时退出，强制结束")
             p.kill()
             p.wait()
 

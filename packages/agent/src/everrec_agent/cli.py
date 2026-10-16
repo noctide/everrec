@@ -2,6 +2,7 @@
 
   everrec-agent init  D:\\EverRec          生成默认配置 config/everrec.yaml
   everrec-agent run   -c D:\\EverRec\\config\\everrec.yaml
+  everrec-agent list-cameras              列出本机摄像头名称
   everrec-agent show-command -c ...       打印将要执行的 FFmpeg 命令（排查用）
 
 Windows 上用 WinSW 把 `everrec-agent run -c ...` 注册成服务（见 deploy/windows）。
@@ -15,7 +16,7 @@ import sys
 from pathlib import Path
 
 from everrec_core.config import AgentConfig, load_config, save_config
-from everrec_core.ffmpeg import build_record_command
+from everrec_core.ffmpeg import build_record_command, list_cameras
 
 from .agent import Agent
 from .logs import setup_logging
@@ -36,6 +37,17 @@ def cmd_init(args: argparse.Namespace) -> int:
 def cmd_show(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
     print(" ".join(f'"{a}"' if " " in a else a for a in build_record_command(cfg)))
+    return 0
+
+
+def cmd_cameras(_args: argparse.Namespace) -> int:
+    cams = list_cameras()
+    if not cams:
+        print("没找到摄像头。检查设备管理器，以及 设置 → 隐私 → 相机 → 允许桌面应用访问相机。")
+        return 1
+    print("找到的摄像头（把名称填到配置文件的 camera.device）：")
+    for c in cams:
+        print(f"  {c}")
     return 0
 
 
@@ -66,6 +78,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("install_dir")
     s.add_argument("--force", action="store_true")
     s.set_defaults(func=cmd_init)
+
+    s = sub.add_parser("list-cameras", help="列出本机摄像头")
+    s.set_defaults(func=cmd_cameras)
 
     s = sub.add_parser("show-command", help="打印 FFmpeg 录制命令")
     s.add_argument("-c", "--config", required=True)

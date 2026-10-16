@@ -9,6 +9,8 @@ import sys
 from pathlib import Path
 
 MUTEX_NAME = "Global\\EverRecAgent"
+# 普通用户在交互会话里可能没有创建 Global\ 对象的权限（服务账号有），退回本会话范围
+FALLBACK_MUTEX_NAME = "Local\\EverRecAgent"
 
 
 class AlreadyRunning(RuntimeError):
@@ -25,7 +27,10 @@ class SingleInstance:
             import ctypes
 
             kernel32 = ctypes.windll.kernel32
+            kernel32.CreateMutexW.restype = ctypes.c_void_p
             self._handle = kernel32.CreateMutexW(None, False, MUTEX_NAME)
+            if not self._handle:
+                self._handle = kernel32.CreateMutexW(None, False, FALLBACK_MUTEX_NAME)
             if kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
                 raise AlreadyRunning("本机已有 EverRec 录制进程在运行")
         else:
