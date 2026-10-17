@@ -64,6 +64,19 @@ class Recording(Base):
     locked: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
+class OperationLog(Base):
+    """操作日志（设计文档 15）：查看、下载、加锁、改设置都留痕。用户名在 WP5 登录后写入。"""
+
+    __tablename__ = "operation_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    action: Mapped[str] = mapped_column(String(32), index=True)  # view / download / lock / unlock / settings
+    recording_id: Mapped[int | None] = mapped_column(ForeignKey("recording.id"), nullable=True)
+    user: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    detail: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 def make_session_factory(url: str) -> sessionmaker:
     kwargs = {"connect_args": {"check_same_thread": False}} if url.startswith("sqlite") else {}
     engine = create_engine(url, **kwargs)

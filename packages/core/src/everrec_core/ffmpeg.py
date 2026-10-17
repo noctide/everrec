@@ -229,3 +229,18 @@ def build_record_command(cfg: AgentConfig) -> list[str]:
         "-strftime", "1",
         str(out),
     ]
+
+
+def remux_to_mp4(src: Path, dst: Path) -> bool:
+    """把 MPEG-TS 转封装成 MP4（不重新编码），加 faststart 让浏览器能边下边播。
+
+    浏览器不能直接播 TS，上传完成后服务端用这个转封装（设计文档 12、tasks.md WP3）。
+    失败返回 False，调用方保留原 TS 供修复。
+    """
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    r = subprocess.run(
+        [ffmpeg_binary(), "-hide_banner", "-nostdin", "-v", "error", "-y",
+         "-i", str(src), "-map", "0:v:0", "-c", "copy", "-movflags", "+faststart", str(dst)],
+        capture_output=True, text=True,
+    )
+    return r.returncode == 0 and dst.exists() and dst.stat().st_size > 0

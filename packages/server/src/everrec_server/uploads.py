@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import threading
 import time
 import uuid
@@ -21,6 +22,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
+from everrec_core.ffmpeg import remux_to_mp4
 from everrec_core.protocol import (
     BackfillSlotReply,
     UploadCompleteReply,
@@ -32,6 +34,8 @@ from everrec_core.protocol import (
 from .db import Recording
 from .deps import get_db
 from .retention import disk_usage_ratio
+
+log = logging.getLogger("everrec.server.uploads")
 
 CHUNK_MAX = 1_048_576  # 分片 ≤ 1 MB，在接口里校验，不依赖 Nginx（设计文档 5.5 措施 6）
 
@@ -230,9 +234,17 @@ def complete_upload(
         dest = dest.with_name(f"{dest.stem}_{uuid.uuid4().hex[:6]}{dest.suffix}")
     path.replace(dest)
     manager.finish(upload_id)
+    # 浏览器不能直接播 TS，转封装成 MP4（设计文档 12）。失败则保留 TS 供修复。
+    final = dest
+    mp4 = dest.with_suffix(".mp4")
+    if remux_to_mp4(dest, mp4):
+        dest.unlink(missing_ok=True)
+        final = mp4
+    else:
+        log.warning("转封装 MP4 失败，保留 TS 待修复：%s", dest)
     rec = Recording(
         code=meta.code,
-        path=str(dest),
+        path=str(final),
         source_filename=meta.filename,
         start_at=meta.started_at,
         end_at=meta.ended_at,

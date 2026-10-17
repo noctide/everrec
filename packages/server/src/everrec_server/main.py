@@ -20,8 +20,10 @@ import logging
 import threading
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -30,7 +32,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from everrec_core.protocol import Heartbeat, HeartbeatReply
 
 from . import __version__
-from .db import Agent, Event, Recording, make_session_factory, utcnow
+from .db import Agent, Event, OperationLog, Recording, make_session_factory, utcnow
 from .deps import get_db
 from .retention import disk_usage_ratio, sweep_retention
 from .settings import Settings
@@ -67,6 +69,28 @@ class DevicesOut(BaseModel):
     items: list[DeviceOut]
     summary: dict[str, int]
     mass_lost: bool  # 大批同时失联：多半是服务器或网络问题，告警合并为一条
+
+
+class RecordingOut(BaseModel):
+    id: int
+    code: str
+    start_at: datetime
+    end_at: datetime
+    size: int
+    integrity: str
+    status: str
+    locked: bool
+
+
+def log_operation(
+    s: Session,
+    action: str,
+    recording_id: int | None,
+    user: str | None = None,
+    detail: str | None = None,
+) -> None:
+    """写操作日志（设计文档 15）。用户名在 WP5 登录后从会话传入，当前为空。"""
+    s.add(OperationLog(action=action, recording_id=recording_id, user=user, detail=detail))
 
 
 # ---------- 应用 ----------
@@ -228,6 +252,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if rec is None:
             raise HTTPException(status_code=404, detail="没有这段录像")
         rec.locked = True
+        log_operation(s, "lock", recording_id)
         s.commit()
         return {"id": rec.id, "locked": True}
 
@@ -237,8 +262,54 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if rec is None:
             raise HTTPException(status_code=404, detail="没有这段录像")
         rec.locked = False
+        log_operation(s, "unlock", recording_id)
         s.commit()
         return {"id": rec.id, "locked": False}
+
+    @app.get("/api/v1/recordings", response_model=list[RecordingOut])
+    def list_recordings(
+        code: str = Query(..., description="位置编号，精确匹配"),
+        from_: datetime = Query(..., alias="from"),
+        to: datetime = Query(...),
+        s: Session = Depends(get_db),
+    ):
+        """按位置编号和时间段查分段（设计文档 10 回放页）。"""
+        q = (
+            select(Recording)
+            .where(Recording.code == code, Recording.start_at >= from_, Recording.start_at < to)
+            .order_by(Recording.start_at)
+        )
+        return [
+            RecordingOut(
+                id=r.id, code=r.code, start_at=aware(r.start_at), end_at=aware(r.end_at),
+                size=r.size, integrity=r.integrity, status=r.status, locked=r.locked,
+            )
+            for r in s.scalars(q)
+        ]
+
+    @app.get("/api/v1/recordings/{recording_id}/file")
+    def recording_file(recording_id: int, s: Session = Depends(get_db)):
+        rec = s.get(Recording, recording_id)
+        if rec is None:
+            raise HTTPException(status_code=404, detail="没有这段录像")
+        return _serve_file(s, rec, "view")
+
+    @app.get("/api/v1/recordings/{recording_id}/download")
+    def recording_download(recording_id: int, s: Session = Depends(get_db)):
+        rec = s.get(Recording, recording_id)
+        if rec is None:
+            raise HTTPException(status_code=404, detail="没有这段录像")
+        return _serve_file(s, rec, "download", as_attachment=True)
+
+    def _serve_file(s: Session, rec: Recording, action: str, as_attachment: bool = False) -> FileResponse:
+        path = Path(rec.path)
+        # 防越权：只服务录像目录内的文件（上传接口已保证，这里再兜底一次）
+        if not path.resolve().is_relative_to(settings.recordings_dir.resolve()) or not path.exists():
+            raise HTTPException(status_code=404, detail="录像文件不存在")
+        log_operation(s, action, rec.id)
+        s.commit()
+        filename = rec.source_filename or path.name
+        return FileResponse(path, media_type="video/mp4", filename=filename if as_attachment else None)
 
     if settings.web_dist and settings.web_dist.exists():
         app.mount("/", StaticFiles(directory=settings.web_dist, html=True), name="web")

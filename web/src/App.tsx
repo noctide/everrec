@@ -1,7 +1,21 @@
+import { useEffect, useState } from "react";
 import DeviceWall from "./DeviceWall";
+import Playback from "./Playback";
 
-// 管理网站一共 3 页（设计文档第 10 节）。骨架阶段只做了设备墙。
+// 管理网站一共 3 页（设计文档第 10 节）。用 hash 路由：`#/` 设备墙、`#/playback` 录像回放。
+function route(): "wall" | "playback" {
+  return window.location.hash.startsWith("#/playback") ? "playback" : "wall";
+}
+
 export default function App() {
+  const [page, setPage] = useState<"wall" | "playback">(route());
+
+  useEffect(() => {
+    const onHash = () => setPage(route());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
   return (
     <div className="app">
       <header className="topbar">
@@ -13,12 +27,12 @@ export default function App() {
           <span>EverRec 恒录</span>
         </div>
         <nav aria-label="主导航">
-          <a className="active" href="#/">设备墙</a>
-          <a className="todo" title="尚未实现">录像回放</a>
+          <a className={page === "wall" ? "active" : ""} href="#/">设备墙</a>
+          <a className={page === "playback" ? "active" : ""} href="#/playback">录像回放</a>
           <a className="todo" title="尚未实现">设置</a>
         </nav>
       </header>
-      <DeviceWall />
+      {page === "wall" ? <DeviceWall /> : <Playback />}
     </div>
   );
 }
