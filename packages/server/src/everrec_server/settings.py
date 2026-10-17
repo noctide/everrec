@@ -19,6 +19,14 @@ class Settings:
     sweep_seconds: int = field(
         default_factory=lambda: int(os.environ.get("EVERREC_SWEEP_SECONDS", "15"))
     )
+    # 录像根目录；上传的分段归档到 {目录}/{位置编号}/{yyyy}/{MM}/{dd}/
+    recordings_dir: Path = field(
+        default_factory=lambda: Path(os.environ.get("EVERREC_RECORDINGS_DIR", "./recordings"))
+    )
+    # 同一时刻最多放行多少台设备补传（设计文档 5.5 措施 3）
+    backfill_limit: int = field(
+        default_factory=lambda: int(os.environ.get("EVERREC_BACKFILL_LIMIT", "5"))
+    )
     # 大批同时失联判定为服务器或网络故障（设计文档 6.3）
     mass_lost_ratio: float = 0.8
     web_dist: Path | None = field(

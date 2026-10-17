@@ -53,3 +53,36 @@ class HeartbeatReply(BaseModel):
     config_version: int = 0
     # 第一版：服务器下发的统一设置/单独覆盖；为空表示沿用本地
     settings: dict = {}
+
+
+# ---------- 上传与补传（设计文档 5.1、5.5，接口前缀 /agent/v1） ----------
+
+
+class UploadRequest(BaseModel):
+    code: str
+    filename: str
+    started_at: datetime
+    ended_at: datetime
+    size: int
+    sha256: str
+    integrity: str  # ok / repaired / partial
+    channel: str    # realtime / backfill
+
+
+class UploadInitReply(BaseModel):
+    upload_id: str
+    received: int = 0   # 服务器已收到的字节数，断点续传从这里开始
+    done: bool = False  # 同 code+filename+sha256 已上传完成，无需再传
+
+
+class UploadProgressReply(BaseModel):
+    received: int
+
+
+class UploadCompleteReply(BaseModel):
+    recording_id: int
+
+
+class BackfillSlotReply(BaseModel):
+    token: str
+    expires_at: datetime

@@ -32,6 +32,7 @@ from . import __version__, child_guard
 from .index import IndexEntry, SegmentIndex
 from .logs import RecentProblems
 from .recorder import Recorder
+from .uploader import Uploader
 
 log = logging.getLogger("agent")
 
@@ -56,6 +57,7 @@ class Agent:
         self._encoding_label = cfg.recording.encoding.label
         self._encoding_note: str | None = None
         self._camera_resolutions: list[str] = []
+        self.uploader = Uploader(cfg, self.index) if cfg.server else None
 
     # ---------- 启动 ----------
 
@@ -110,10 +112,14 @@ class Agent:
 
     def _archive(self, seg, integrity: str = "ok") -> None:
         dest = archive_segment(self.cfg.recordings_dir, seg)
-        self.index.add(
-            IndexEntry(str(dest), seg.started_at.isoformat(), dest.stat().st_size, str(integrity))
-        )
+        entry = IndexEntry(str(dest), seg.started_at.isoformat(), dest.stat().st_size, str(integrity))
+        self.index.add(entry)
         log.info("分段已归档：%s", dest.relative_to(self.cfg.recordings_dir))
+        if self.uploader:
+            # 离线或还有积压时走补传（先申请名额、4 Mbps），否则实时（1 Mbps）
+            backlogged = self.offline_since is not None or self.uploader.has_backlog()
+            channel = "backfill" if backlogged else "realtime"
+            self.uploader.enqueue(entry, channel)
 
     def archive_finished(self) -> None:
         segs = list_spool(spool_dir(self.cfg))
@@ -255,6 +261,8 @@ class Agent:
         for w in self.cfg.config_warnings:
             log.warning("配置文件有误：%s", w)
         self._probe_camera()
+        if self.uploader:
+            self.uploader.start()  # 先扫上次没送出去的积压，再起线程
         self.recover_spool()
         self.recorder.start()
         self.watcher.reset()
@@ -269,4 +277,6 @@ class Agent:
             # 正常停止时最后一段也是完整的
             for seg in list_spool(spool_dir(self.cfg)):
                 self._archive(seg)
+            if self.uploader:
+                self.uploader.stop()
             log.info("Agent 已停止")
