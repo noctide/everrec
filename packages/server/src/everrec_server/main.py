@@ -17,12 +17,14 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 import httpx
-from fastapi import Depends, FastAPI, Query
+from fastapi import Body, Depends, FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -60,6 +62,8 @@ class DeviceOut(BaseModel):
     restarts: int
     pending_sync: int
     disk_used: float
+    has_thumbnail: bool
+    thumbnail_at: datetime | None
     recent_logs: list[dict]
 
 
@@ -67,6 +71,14 @@ class DevicesOut(BaseModel):
     items: list[DeviceOut]
     summary: dict[str, int]
     mass_lost: bool  # 大批同时失联：多半是服务器或网络问题，告警合并为一条
+
+
+def _thumbnail_info(settings: Settings, code: str) -> tuple[bool, datetime | None]:
+    """设备最新一张缩略图是否存在，以及它落盘的时间（失联的设备墙标时间用）。"""
+    thumb = settings.recordings_dir / "_thumbnails" / f"{code}.jpg"
+    if not thumb.exists():
+        return False, None
+    return True, datetime.fromtimestamp(thumb.stat().st_mtime, tz=UTC)
 
 
 # ---------- 应用 ----------
@@ -199,6 +211,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 continue
             p = a.last_payload or {}
             last = aware(a.last_heartbeat)
+            has_thumb, thumb_at = _thumbnail_info(settings, a.code)
             out.append(DeviceOut(
                 id=a.id, code=a.code, hostname=a.hostname, version=a.version, status=st,
                 last_heartbeat=last, seconds_since_heartbeat=int((now - last).total_seconds()),
@@ -206,6 +219,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 current_segment=p.get("current_segment"), checks=p.get("checks", {}),
                 problems=p.get("problems", []), restarts=p.get("restarts", 0),
                 pending_sync=p.get("pending_sync", 0), disk_used=p.get("disk_used", 0),
+                has_thumbnail=has_thumb, thumbnail_at=thumb_at,
                 recent_logs=(a.recent_logs or [])[-20:],
             ))
         total = sum(summary.values())
@@ -225,6 +239,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "body": r.text[:200]}
         except httpx.HTTPError as e:
             return {"ok": False, "error": str(e)}
+
+    @app.put("/agent/v1/thumbnail")
+    def put_thumbnail(code: str = Query(...), payload: bytes = Body(...)):
+        """Agent 每分钟上传一张缩略图；只保留每台最新一张（设计文档 6.2）。"""
+        if not re.fullmatch(r"[A-Za-z0-9-]+", code):
+            raise HTTPException(status_code=400, detail="非法位置编号")
+        if len(payload) > 1_000_000:
+            raise HTTPException(status_code=413, detail="缩略图太大")
+        thumb_dir = settings.recordings_dir / "_thumbnails"
+        thumb_dir.mkdir(parents=True, exist_ok=True)
+        dest = thumb_dir / f"{code}.jpg"
+        tmp = dest.with_name(dest.name + ".tmp")
+        tmp.write_bytes(payload)
+        tmp.replace(dest)  # 原子替换，避免读到写一半的图
+        return {"ok": True}
+
+    @app.get("/api/v1/devices/{device_id}/snapshot")
+    def device_snapshot(device_id: int, s: Session = Depends(get_db)):
+        agent = s.get(Agent, device_id)
+        if agent is None:
+            raise HTTPException(status_code=404, detail="没有这台设备")
+        thumb = settings.recordings_dir / "_thumbnails" / f"{agent.code}.jpg"
+        if not thumb.exists():
+            raise HTTPException(status_code=404, detail="还没有缩略图")
+        return FileResponse(thumb, media_type="image/jpeg")
 
     if settings.web_dist and settings.web_dist.exists():
         app.mount("/", StaticFiles(directory=settings.web_dist, html=True), name="web")

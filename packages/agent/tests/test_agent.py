@@ -5,6 +5,7 @@ import threading
 import time
 from pathlib import Path
 
+import httpx
 import pytest
 
 from everrec_agent.agent import Agent
@@ -81,3 +82,28 @@ def test_recovers_interrupted_segment_on_startup(cfg):
     integrities = {Path(e.path).name: e.integrity for e in Agent(cfg).index.entries()}
     assert integrities["HD-A-012_090000.ts"] == "ok"
     assert integrities["HD-A-012_090500.ts"] in ("repaired", "partial")
+
+
+def test_send_thumbnail_uploads(tmp_path, monkeypatch):
+    cfg = AgentConfig(
+        server="http://test",
+        location=Location(state="HD", building="A", number="012"),
+        camera=Camera(type=CameraType.TEST),
+        recording=Recording(segment_seconds=2),
+    )
+    cfg.install_dir = tmp_path
+    thumb = cfg.state_dir / "thumb.jpg"
+    thumb.parent.mkdir(parents=True, exist_ok=True)
+    thumb.write_bytes(b"\xff\xd8 fake-jpeg")
+
+    calls: dict = {}
+
+    def fake_put(url, **kw):
+        calls["url"] = url
+        calls["content"] = kw.get("content")
+        return httpx.Response(200, json={"ok": True})
+
+    monkeypatch.setattr("everrec_agent.agent.httpx.put", fake_put)
+    Agent(cfg).send_thumbnail()
+    assert calls["url"] == "http://test/agent/v1/thumbnail?code=HD-A-012"
+    assert calls["content"] == b"\xff\xd8 fake-jpeg"

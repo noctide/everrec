@@ -24,6 +24,8 @@ export interface Device {
   restarts: number;
   pending_sync: number;
   disk_used: number;
+  has_thumbnail: boolean;
+  thumbnail_at: string | null;
   recent_logs: LogLine[];
 }
 
