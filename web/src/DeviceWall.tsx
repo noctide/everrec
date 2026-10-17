@@ -125,7 +125,19 @@ export default function DeviceWall() {
                 <rect x="3" y="6" width="13" height="12" rx="2" />
                 <path d="M16 10l5-3v10l-5-3" />
               </svg>
+              {d.has_thumbnail && (
+                <img
+                  className="thumb-img"
+                  src={`/api/v1/devices/${d.id}/snapshot?t=${encodeURIComponent(d.thumbnail_at ?? "")}`}
+                  alt={`${d.code} 画面`}
+                  loading="lazy"
+                  onError={(e) => { e.currentTarget.style.display = "none"; }}
+                />
+              )}
               <span className="note">{d.current_segment ?? "—"}</span>
+              {d.status === "lost" && d.thumbnail_at && (
+                <span className="note thumb-age">最后画面 {ago((Date.now() - Date.parse(d.thumbnail_at)) / 1000)}</span>
+              )}
               <span className={`pill ${d.status}`}>{STATUS_TEXT[d.status]}</span>
             </div>
             <div className="card-body">

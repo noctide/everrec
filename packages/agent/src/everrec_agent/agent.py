@@ -37,6 +37,7 @@ from .uploader import Uploader
 log = logging.getLogger("agent")
 
 TICK_SECONDS = 2
+THUMBNAIL_SECONDS = 60  # 缩略图每分钟发一张（设计文档 6.2）
 
 
 class Agent:
@@ -53,6 +54,8 @@ class Agent:
         self.offline_since: datetime | None = None
         self._last_hb = 0.0
         self._hb_thread: threading.Thread | None = None
+        self._last_thumb = 0.0
+        self._thumb_thread: threading.Thread | None = None
         self.stop_event = threading.Event()
         self._encoding_label = cfg.recording.encoding.label
         self._encoding_note: str | None = None
@@ -246,6 +249,30 @@ class Agent:
         self._hb_thread = threading.Thread(target=self.send_heartbeat, daemon=True)
         self._hb_thread.start()
 
+    def send_thumbnail(self) -> None:
+        """把最新缩略图发给服务器（小数据，不受补传排队影响）。"""
+        thumb = self.cfg.state_dir / "thumb.jpg"
+        if not thumb.exists():
+            return
+        url = f"{self.cfg.server.rstrip('/')}/agent/v1/thumbnail?code={self.cfg.code}"
+        try:
+            with thumb.open("rb") as f:
+                httpx.put(url, content=f.read(), timeout=5,
+                          headers={"Content-Type": "image/jpeg"})
+        except httpx.HTTPError:
+            pass  # 缩略图发不出去无所谓，下一分钟再试
+
+    def maybe_thumbnail(self) -> None:
+        if not self.cfg.server:
+            return
+        if time.monotonic() - self._last_thumb < THUMBNAIL_SECONDS:
+            return
+        if self._thumb_thread and self._thumb_thread.is_alive():
+            return
+        self._last_thumb = time.monotonic()
+        self._thumb_thread = threading.Thread(target=self.send_thumbnail, daemon=True)
+        self._thumb_thread.start()
+
     # ---------- 运行 ----------
 
     def tick(self) -> None:
@@ -253,6 +280,7 @@ class Agent:
         self.archive_finished()
         self.enforce_local_quota()
         self.maybe_heartbeat()
+        self.maybe_thumbnail()
 
     def run(self) -> None:
         log.info("EverRec Agent %s 启动，位置编号 %s，录像目录 %s，错峰偏移 %d 秒",
