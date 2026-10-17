@@ -21,6 +21,7 @@ import threading
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
+import httpx
 from fastapi import Depends, FastAPI, Query
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -29,7 +30,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from everrec_core.protocol import Heartbeat, HeartbeatReply
 
-from . import __version__
+from . import __version__, push
 from .db import Agent, Event, make_session_factory, utcnow
 from .deps import get_db
 from .settings import Settings
@@ -81,21 +82,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         agent.status = new
         if ev:
             etype, severity, summary = ev
+            detail = {"problems": agent.last_payload.get("problems", [])}
             s.add(Event(type=etype, severity=severity, agent_id=agent.id, code=agent.code,
-                        summary=summary, occurred_at=now,
-                        payload={"problems": agent.last_payload.get("problems", [])}))
+                        summary=summary, occurred_at=now, payload=detail))
+            push.enqueue(s, etype, severity, summary, agent.code, detail, now)
             log.info("事件 %s %s：%s", etype, agent.code, summary)
-            # TODO 第一版：投递到推送地址（发件箱 + 重试，设计文档 8.5）
 
     def sweep_once() -> None:
-        """后台判定失联。失联只能由服务器发现。"""
+        """后台判定失联。失联只能由服务器发现；大批同时失联合并成一条。"""
         now = datetime.now(UTC)
         with SessionLocal() as s:
             agents = s.scalars(select(Agent)).all()
-            for a in agents:
-                new = device_status(a, now, settings.lost_after_seconds)
-                if new is Status.LOST and a.status != Status.LOST:
-                    record_transition(s, a, new, now)
+            if not agents:
+                return
+            lost = [a for a in agents
+                    if device_status(a, now, settings.lost_after_seconds) is Status.LOST]
+            newly_lost = [a for a in lost if a.status != Status.LOST]
+            mass = len(agents) >= 3 and len(lost) / len(agents) >= settings.mass_lost_ratio
+            if newly_lost:
+                if mass:
+                    for a in newly_lost:
+                        a.status = Status.LOST  # 只更新状态，不逐台推送
+                    summary = f"疑似服务器或网络故障（{len(lost)}/{len(agents)} 台设备同时失联）"
+                    detail = {"lost": len(lost), "total": len(agents)}
+                    s.add(Event(type="mass_lost", severity="critical", summary=summary,
+                                occurred_at=now, payload=detail))
+                    push.enqueue(s, "mass_lost", "critical", summary, None, detail, now)
+                    log.info("事件 mass_lost：%s", summary)
+                else:
+                    for a in newly_lost:
+                        record_transition(s, a, Status.LOST, now)
             s.commit()
 
     def sweeper() -> None:
@@ -105,10 +121,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             except Exception:
                 log.exception("失联判定出错")
 
+    def push_worker() -> None:
+        push.worker(SessionLocal, settings, stop)
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        t = threading.Thread(target=sweeper, daemon=True, name="lost-sweeper")
-        t.start()
+        threads = [
+            threading.Thread(target=sweeper, daemon=True, name="lost-sweeper"),
+            threading.Thread(target=push_worker, daemon=True, name="push-worker"),
+        ]
+        for t in threads:
+            t.start()
         yield
         stop.set()
 
@@ -137,12 +160,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             s.add(agent)
             s.flush()
             log.info("新设备注册：%s（%s）", hb.code, hb.hostname)
+        old_storage = (agent.last_payload or {}).get("checks", {}).get("storage", "ok")
         agent.hostname, agent.version, agent.last_heartbeat = hb.hostname, hb.agent_version, now
         agent.last_payload = hb.model_dump(mode="json", exclude={"recent_logs"})
         if hb.recent_logs:
             logs = (agent.recent_logs or []) + [x.model_dump(mode="json") for x in hb.recent_logs]
             agent.recent_logs = logs[-100:]
         record_transition(s, agent, device_status(agent, now, settings.lost_after_seconds), now)
+        # storage.low：存储检查从 ok 变 warn/fail（设计文档 8.1 存储类事件）
+        new_storage = hb.checks.storage
+        if old_storage == "ok" and new_storage in ("warn", "fail"):
+            severity = "critical" if new_storage == "fail" else "warning"
+            summary = f"磁盘空间不足（已用 {int(hb.disk_used * 100)}%）"
+            detail = {"disk_used": hb.disk_used, "level": str(new_storage)}
+            s.add(Event(type="storage.low", severity=severity, agent_id=agent.id, code=agent.code,
+                        summary=summary, occurred_at=now, payload=detail))
+            push.enqueue(s, "storage.low", severity, summary, agent.code, detail, now)
+            log.info("事件 storage.low %s：%s", agent.code, summary)
         s.commit()
         return HeartbeatReply()
 
@@ -177,6 +211,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         total = sum(summary.values())
         mass_lost = total >= 3 and summary[Status.LOST] / total >= settings.mass_lost_ratio
         return DevicesOut(items=out, summary=summary, mass_lost=mass_lost)
+
+    @app.post("/api/v1/push/test")
+    def push_test():
+        """测试推送接口：立即发一条测试消息，返回对方状态码和内容（设计文档 8.3）。"""
+        if not settings.webhook_url:
+            return {"ok": False, "error": "没有配置推送地址（EVERREC_WEBHOOK_URL）"}
+        now = utcnow()
+        msg = push.build_message("push.test", "info", "测试推送", None, {}, now)
+        try:
+            r = push.post_message(settings, msg["eventId"], msg)
+            return {"ok": 200 <= r.status_code < 300, "status_code": r.status_code,
+                    "body": r.text[:200]}
+        except httpx.HTTPError as e:
+            return {"ok": False, "error": str(e)}
 
     if settings.web_dist and settings.web_dist.exists():
         app.mount("/", StaticFiles(directory=settings.web_dist, html=True), name="web")
