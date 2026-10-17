@@ -97,6 +97,7 @@ class AgentConfig(BaseModel):
     # 不写进文件，加载时填入
     install_dir: Path = Field(default=Path("."), exclude=True)
     config_warnings: list[str] = Field(default_factory=list, exclude=True)
+    config_path: Path | None = Field(default=None, exclude=True)  # 配置文件路径，用于检测改动
 
     @property
     def code(self) -> str:
@@ -168,6 +169,7 @@ def load_config(path: str | Path) -> AgentConfig:
     cfg.config_warnings = warnings
     # config/everrec.yaml → 安装文件夹是它的上两级
     cfg.install_dir = path.parent.parent if path.parent.name == "config" else path.parent
+    cfg.config_path = path
     return cfg
 
 

@@ -15,7 +15,7 @@ import signal
 import sys
 from pathlib import Path
 
-from everrec_core.config import AgentConfig, load_config, save_config
+from everrec_core.config import AgentConfig, load_config, save_config, validate_tolerant
 from everrec_core.ffmpeg import build_record_command, list_camera_modes, list_cameras
 
 from .agent import Agent
@@ -82,6 +82,31 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _set_nested(data: dict, keys: list[str], value: str) -> None:
+    node = data
+    for k in keys[:-1]:
+        node = node.setdefault(k, {})
+    node[keys[-1]] = value  # 保持字符串，类型交给 pydantic 校验时转换（保留前导零等）
+
+
+def cmd_set_config(args: argparse.Namespace) -> int:
+    """修改配置文件。桌面端改设置时经 UAC 提权调用（设计 4.6、WP8）。"""
+    if (cfg := _load(args.config)) is None:
+        return 1
+    data = cfg.model_dump(mode="json", exclude={"install_dir", "config_warnings", "config_path"})
+    for kv in args.keyvalues:
+        if "=" not in kv:
+            print(f"参数格式应为 键=值：{kv}", file=sys.stderr)
+            return 1
+        key, value = kv.split("=", 1)
+        _set_nested(data, key.split("."), value)
+    new_cfg, warnings = validate_tolerant(data)
+    save_config(new_cfg, args.config)
+    for w in warnings:
+        print(f"警告：{w}", file=sys.stderr)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="everrec-agent", description="EverRec 采集端")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -97,6 +122,12 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("show-command", help="打印 FFmpeg 录制命令")
     s.add_argument("-c", "--config", required=True)
     s.set_defaults(func=cmd_show)
+
+    s = sub.add_parser("set-config", help="修改配置文件（键=值，桌面端改设置用）")
+    s.add_argument("-c", "--config", required=True)
+    s.add_argument("keyvalues", nargs="+", metavar="KEY=VALUE",
+                   help="如 server=https://x location.number=012 recording.quality=standard")
+    s.set_defaults(func=cmd_set_config)
 
     s = sub.add_parser("run", help="开始录制（前台运行，服务管理器调用的也是这个）")
     s.add_argument("-c", "--config", required=True)
