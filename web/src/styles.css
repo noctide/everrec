@@ -163,3 +163,43 @@ button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
 .link { border: none; background: none; color: #545454; cursor: pointer; font-size: 13px; text-decoration: none; padding: 0; }
 .link:hover { color: #383838; }
 .locked { color: var(--muted); }
+
+/* ---- 设置页 ---- */
+.settings { max-width: 900px; }
+.card-block {
+  border: 1px solid var(--line); border-radius: 6px; padding: 16px 18px; margin-bottom: 16px;
+  display: flex; flex-direction: column; gap: 14px; background: var(--bg);
+}
+.card-block h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.card-block p { margin: 0; }
+.quality-editor { display: flex; flex-direction: column; gap: 12px; }
+.slider-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.slider-label { font-size: 13px; color: var(--muted); min-width: 48px; }
+.slider { display: flex; flex-wrap: wrap; gap: 6px; }
+.slider .stop {
+  min-width: 52px; height: 34px; padding: 0 10px; border-radius: 6px; font-size: 13px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--bg); color: var(--text);
+}
+.slider .stop.on { border-color: var(--accent); background: var(--accent); color: #fff; }
+.slider .stop:disabled { opacity: 0.4; cursor: not-allowed; }
+.slider .rec { font-size: 11px; margin-left: 4px; }
+.advanced { border-top: 1px solid var(--chip); padding-top: 10px; }
+.advanced summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+.advanced-actions { display: flex; align-items: center; gap: 12px; margin-top: 6px; }
+.cost { font-size: 13px; padding: 10px 12px; background: var(--chip); border-radius: 6px; }
+.cost.warn { background: var(--chip-alert); }
+.cost strong { color: var(--strong); }
+.warn-text { color: #a33; margin-left: 6px; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field label, .field-row label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--text); }
+.field input, .field-row input {
+  height: 32px; border: 1px solid var(--line); border-radius: 6px; padding: 0 10px; font-size: 14px;
+}
+.field-row { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; }
+.field-row label { flex: 1 1 160px; }
+label.check { flex-direction: row; align-items: center; gap: 8px; }
+label.check input { height: auto; }
+.device-list { display: flex; flex-direction: column; gap: 6px; }
+.device-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--chip); }
+.device-row .mono { flex: 1; }
+.save-bar { display: flex; gap: 10px; align-items: center; position: sticky; bottom: 0; background: var(--bg); padding: 12px 0; }

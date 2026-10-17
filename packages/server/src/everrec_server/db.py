@@ -77,6 +77,37 @@ class OperationLog(Base):
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class Setting(Base):
+    """服务端设置（设计文档 7、tasks.md WP4）：全局一套 + 按位置编号/前缀覆盖。"""
+
+    __tablename__ = "setting"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scope: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    # scope 取值："global" / "device:<code>" / "prefix:<prefix>"
+    data: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class LocationOption(Base):
+    """位置选项（州/区/楼栋/楼层），心跳回复给桌面端做下拉（tasks.md WP4）。"""
+
+    __tablename__ = "location_option"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    level: Mapped[str] = mapped_column(String(16), index=True)  # state / district / building / floor
+    value: Mapped[str] = mapped_column(String(64))
+
+
+class Meta(Base):
+    """少量键值对（配置版本号等）。"""
+
+    __tablename__ = "meta"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(String(256))
+
+
 def make_session_factory(url: str) -> sessionmaker:
     kwargs = {"connect_args": {"check_same_thread": False}} if url.startswith("sqlite") else {}
     engine = create_engine(url, **kwargs)

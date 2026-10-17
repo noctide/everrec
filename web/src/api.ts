@@ -25,6 +25,7 @@ export interface Device {
   pending_sync: number;
   disk_used: number;
   recent_logs: LogLine[];
+  camera_resolutions: string[];
 }
 
 export interface DevicesResponse {
@@ -65,4 +66,66 @@ export function recordingFileUrl(id: number): string {
 export async function setRecordingLock(id: number, locked: boolean): Promise<void> {
   const r = await fetch(`/api/v1/recordings/${id}/${locked ? "lock" : "unlock"}`, { method: "POST" });
   if (!r.ok) throw new Error(`服务器返回 ${r.status}`);
+}
+
+// ---- 设置页（tasks.md WP4） ----
+
+export interface SettingsState {
+  config_version: number;
+  global: Record<string, unknown>;
+  devices: Record<string, Record<string, unknown>>;
+  prefixes: Record<string, Record<string, unknown>>;
+  location_options: Record<string, string[]>;
+  disk: { total_gb: number; free_gb: number; used_ratio: number };
+}
+
+export interface QualityInfo {
+  quality: { quality: string; label: string; recommended: boolean; resolution: string; fps: number; mb_per_hour_max: number }[];
+  resolutions: string[];
+  resolution_sizes: Record<string, [number, number]>;
+  fps: number[];
+  recommended_quality: string;
+  recommended_resolution: string;
+  recommended_fps: number;
+}
+
+export async function fetchSettings(): Promise<SettingsState> {
+  const r = await fetch("/api/v1/settings");
+  if (!r.ok) throw new Error(`服务器返回 ${r.status}`);
+  return r.json();
+}
+
+export async function fetchQuality(): Promise<QualityInfo> {
+  const r = await fetch("/api/v1/quality");
+  if (!r.ok) throw new Error(`服务器返回 ${r.status}`);
+  return r.json();
+}
+
+async function putJson(url: string, data: unknown): Promise<void> {
+  const r = await fetch(url, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({}));
+    throw new Error(body.detail ?? `服务器返回 ${r.status}`);
+  }
+}
+
+export async function putGlobalSettings(data: Record<string, unknown>): Promise<void> {
+  await putJson("/api/v1/settings/global", data);
+}
+
+export async function putDeviceSettings(code: string, data: Record<string, unknown>): Promise<void> {
+  await putJson(`/api/v1/settings/device/${encodeURIComponent(code)}`, data);
+}
+
+export async function deleteDeviceSettings(code: string): Promise<void> {
+  const r = await fetch(`/api/v1/settings/device/${encodeURIComponent(code)}`, { method: "DELETE" });
+  if (!r.ok) throw new Error(`服务器返回 ${r.status}`);
+}
+
+export async function putLocationOptions(data: Record<string, string[]>): Promise<void> {
+  await putJson("/api/v1/location-options", data);
 }

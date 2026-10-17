@@ -1,14 +1,17 @@
 import { useEffect, useState } from "react";
 import DeviceWall from "./DeviceWall";
 import Playback from "./Playback";
+import Settings from "./Settings";
 
-// 管理网站一共 3 页（设计文档第 10 节）。用 hash 路由：`#/` 设备墙、`#/playback` 录像回放。
-function route(): "wall" | "playback" {
-  return window.location.hash.startsWith("#/playback") ? "playback" : "wall";
+// 管理网站一共 3 页（设计文档第 10 节）。用 hash 路由：`#/` 设备墙、`#/playback` 录像回放、`#/settings` 设置。
+function route(): "wall" | "playback" | "settings" {
+  if (window.location.hash.startsWith("#/playback")) return "playback";
+  if (window.location.hash.startsWith("#/settings")) return "settings";
+  return "wall";
 }
 
 export default function App() {
-  const [page, setPage] = useState<"wall" | "playback">(route());
+  const [page, setPage] = useState<"wall" | "playback" | "settings">(route());
 
   useEffect(() => {
     const onHash = () => setPage(route());
@@ -29,10 +32,10 @@ export default function App() {
         <nav aria-label="主导航">
           <a className={page === "wall" ? "active" : ""} href="#/">设备墙</a>
           <a className={page === "playback" ? "active" : ""} href="#/playback">录像回放</a>
-          <a className="todo" title="尚未实现">设置</a>
+          <a className={page === "settings" ? "active" : ""} href="#/settings">设置</a>
         </nav>
       </header>
-      {page === "wall" ? <DeviceWall /> : <Playback />}
+      {page === "wall" ? <DeviceWall /> : page === "playback" ? <Playback /> : <Settings />}
     </div>
   );
 }

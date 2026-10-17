@@ -76,6 +76,13 @@ class TokenBucket:
                 return 0.0
             return -self.tokens / self.rate
 
+    def set_rate(self, bytes_per_sec: float) -> None:
+        """服务器下发限速时热更新（不会溢出已有令牌）。"""
+        with self._lock:
+            self.rate = max(1.0, bytes_per_sec)
+            self.capacity = self.rate
+            self.tokens = min(self.tokens, self.capacity)
+
 
 class Uploader:
     def __init__(
@@ -133,6 +140,11 @@ class Uploader:
         with self._target_lock:
             self.base = server.rstrip("/")
             self._generation += 1
+
+    def set_rates(self, realtime_bps: float, backfill_bps: float) -> None:
+        """服务器下发限速时热更新两个通道的令牌桶。"""
+        self.buckets["realtime"].set_rate(realtime_bps / 8)
+        self.buckets["backfill"].set_rate(backfill_bps / 8)
 
     def stop(self, timeout: float = 15.0) -> None:
         """尽量把队列送完再退出；送不完的留在本地，下次启动补传。"""

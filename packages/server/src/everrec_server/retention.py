@@ -29,6 +29,19 @@ def disk_usage_ratio(path: Path) -> float:
     return used / total if total else 0.0
 
 
+def disk_info(path: Path) -> dict:
+    """磁盘总量/剩余/已用比例，设置页用它算"还能存几天"。"""
+    try:
+        total, used, free = shutil.disk_usage(path)
+    except OSError:
+        return {"total_gb": 0.0, "free_gb": 0.0, "used_ratio": 0.0}
+    return {
+        "total_gb": round(total / 1e9, 1),
+        "free_gb": round(free / 1e9, 1),
+        "used_ratio": round(used / total, 3) if total else 0.0,
+    }
+
+
 def _delete_file(recordings_dir: Path, path_str: str) -> bool:
     """删除录像文件；只删录像目录内的（和上传接口同一套防越权检查）。"""
     p = Path(path_str)

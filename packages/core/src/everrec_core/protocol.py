@@ -52,8 +52,10 @@ class Heartbeat(BaseModel):
 class HeartbeatReply(BaseModel):
     ok: bool = True
     config_version: int = 0
-    # 第一版：服务器下发的统一设置/单独覆盖；为空表示沿用本地
+    # 服务器下发的合并后最终配置（设计文档 7）；为空表示沿用本地/缓存
     settings: dict = {}
+    # 位置选项（州/区/楼栋/楼层），供桌面端设置页做下拉（tasks.md WP4）
+    location_options: dict = {}
 
 
 # ---------- 上传与补传（设计文档 5.1、5.5，接口前缀 /agent/v1） ----------

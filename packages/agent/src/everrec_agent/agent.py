@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import platform
 import threading
@@ -58,6 +59,9 @@ class Agent:
         self._encoding_note: str | None = None
         self._camera_resolutions: list[str] = []
         self.uploader = Uploader(cfg, self.index) if cfg.server else None
+        self._config_version = 0
+        self._server_settings: dict | None = None  # 待应用的下发配置
+        self._load_cached_server_config()
 
     # ---------- 启动 ----------
 
@@ -108,6 +112,59 @@ class Agent:
         if note:
             log.warning(note)
 
+    # ---------- 服务器下发配置 ----------
+
+    def _load_cached_server_config(self) -> None:
+        """启动时读缓存的服务器配置：离线也沿用最后一次收到的档位。"""
+        path = self.cfg.state_dir / "server_config.json"
+        if not path.exists():
+            return
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if data.get("settings"):
+                self._server_settings = data["settings"]
+                self._config_version = int(data.get("config_version", 0))
+        except (OSError, ValueError):
+            log.warning("读取缓存的服务器配置失败，沿用本地配置")
+
+    def _cache_server_config(self, reply: HeartbeatReply) -> None:
+        """把下发的配置原子写入 state/server_config.json。"""
+        path = self.cfg.state_dir / "server_config.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        data = {"config_version": reply.config_version, "settings": reply.settings}
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(path)
+
+    def _apply_to_cfg(self, settings: dict) -> None:
+        """把下发的设置套到本地配置（不重启录制）。"""
+        rec = self.cfg.recording
+        for key, value in settings.items():
+            if key == "quality":
+                rec.quality = value
+            elif key == "resolution":
+                rec.resolution = value
+            elif key == "fps":
+                rec.fps = value
+            elif key == "watermark":
+                rec.watermark = value
+            elif key == "segment_seconds":
+                rec.segment_seconds = value
+            elif key == "local_quota_gb":
+                rec.local_quota_gb = value
+        if self.uploader and ("upload_realtime_bps" in settings or "upload_backfill_bps" in settings):
+            self.uploader.set_rates(
+                settings.get("upload_realtime_bps", 1_000_000),
+                settings.get("upload_backfill_bps", 4_000_000),
+            )
+        self._probe_camera()  # 刷新画质标签与"摄像头达不到该分辨率"的提示
+
+    def _apply_server_settings(self, settings: dict) -> None:
+        """应用下发配置并重启录制（只在分段边界调用）。"""
+        self._apply_to_cfg(settings)
+        log.info("应用服务器下发配置：%s", settings)
+        self.recorder.restart("服务器下发了新配置")
+
     # ---------- 每一轮 ----------
 
     def _archive(self, seg, integrity: str = "ok", channel: str = "realtime") -> None:
@@ -120,11 +177,12 @@ class Agent:
                 channel = "backfill"  # 断网期间积压走补传；恢复后的新分段仍走实时
             self.uploader.enqueue(entry, channel)
 
-    def archive_finished(self) -> None:
+    def archive_finished(self) -> int:
         segs = list_spool(spool_dir(self.cfg))
         finished = segs[:-1] if self.recorder.running else []
         for seg in finished:
             self._archive(seg)
+        return len(finished)
 
     def enforce_local_quota(self) -> None:
         quota = int(self.cfg.recording.local_quota_gb * 1024**3)
@@ -220,12 +278,17 @@ class Agent:
             r = httpx.post(url, content=hb.model_dump_json(), timeout=5,
                            headers={"Content-Type": "application/json"})
             r.raise_for_status()
-            HeartbeatReply.model_validate(r.json())  # 第一版：下发配置在此接入
+            reply = HeartbeatReply.model_validate(r.json())
             if server != self.cfg.server:
                 return  # 旧服务器的回复不能覆盖切换后的连接状态
             if self.online is False:
                 log.info("已重新连上服务器（离线开始于 %s），开始补传", self.offline_since)
             self.online = True
+            # 配置版本变了就缓存并在下一分段边界应用（设计文档 7、tasks.md WP4）
+            if reply.settings and reply.config_version != self._config_version:
+                self._cache_server_config(reply)
+                self._config_version = reply.config_version
+                self._server_settings = reply.settings
             # 离线期间的积压补传完才算回到正常（设备墙上从黄色变绿色）
             if self.offline_since and hb.pending_sync <= 1:
                 self.offline_since = None
@@ -254,7 +317,11 @@ class Agent:
 
     def tick(self) -> None:
         self.run_checks()
-        self.archive_finished()
+        archived = self.archive_finished()
+        # 服务器下发的新配置：在下一个分段边界生效（设计文档 4.6、tasks.md WP4）
+        if self._server_settings is not None and archived > 0:
+            self._apply_server_settings(self._server_settings)
+            self._server_settings = None
         self.enforce_local_quota()
         self.maybe_heartbeat()
 
@@ -265,6 +332,11 @@ class Agent:
         for w in self.cfg.config_warnings:
             log.warning("配置文件有误：%s", w)
         self._probe_camera()
+        # 启动时先套用缓存的服务器配置（离线也沿用最后一次收到的档位），再开始录
+        if self._server_settings:
+            self._apply_to_cfg(self._server_settings)
+            self._server_settings = None
+            log.info("启动时套用缓存的服务器配置")
         self.recover_spool()
         self.recorder.start()
         self.watcher.reset()

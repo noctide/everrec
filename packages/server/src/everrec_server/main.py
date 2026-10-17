@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -31,10 +32,19 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from everrec_core.protocol import Heartbeat, HeartbeatReply
 
-from . import __version__
-from .db import Agent, Event, OperationLog, Recording, make_session_factory, utcnow
+from . import __version__, config_push
+from .db import (
+    Agent,
+    Event,
+    LocationOption,
+    OperationLog,
+    Recording,
+    Setting,
+    make_session_factory,
+    utcnow,
+)
 from .deps import get_db
-from .retention import disk_usage_ratio, sweep_retention
+from .retention import disk_info, disk_usage_ratio, sweep_retention
 from .settings import Settings
 from .status import Status, aware, device_status, transition_event
 from .uploads import UploadManager
@@ -63,6 +73,7 @@ class DeviceOut(BaseModel):
     pending_sync: int
     disk_used: float
     recent_logs: list[dict]
+    camera_resolutions: list[str]
 
 
 class DevicesOut(BaseModel):
@@ -210,8 +221,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             logs = (agent.recent_logs or []) + [x.model_dump(mode="json") for x in hb.recent_logs]
             agent.recent_logs = logs[-100:]
         record_transition(s, agent, device_status(agent, now, settings.lost_after_seconds), now)
+        reply = HeartbeatReply(
+            config_version=config_push.get_config_version(s),
+            settings=config_push.agent_settings(config_push.effective_settings(s, hb.code)),
+            location_options=config_push.location_options(s),
+        )
         s.commit()
-        return HeartbeatReply()
+        return reply
 
     @app.get("/api/v1/devices", response_model=DevicesOut)
     def list_devices(
@@ -240,6 +256,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 problems=p.get("problems", []), restarts=p.get("restarts", 0),
                 pending_sync=p.get("pending_sync", 0), disk_used=p.get("disk_used", 0),
                 recent_logs=(a.recent_logs or [])[-20:],
+                camera_resolutions=p.get("camera_resolutions", []),
             ))
         total = sum(summary.values())
         mass_lost = total >= 3 and summary[Status.LOST] / total >= settings.mass_lost_ratio
@@ -310,6 +327,102 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         s.commit()
         filename = rec.source_filename or path.name
         return FileResponse(path, media_type="video/mp4", filename=filename if as_attachment else None)
+
+    # ---------- 设置（设计文档 7、10 设置页；tasks.md WP4） ----------
+
+    _CODE_RE = re.compile(r"^[A-Za-z0-9-]+$")
+
+    @app.get("/api/v1/settings")
+    def get_settings(s: Session = Depends(get_db)):
+        devices = {r.scope[len("device:"):]: r.data for r in s.scalars(
+            select(Setting).where(Setting.scope.like("device:%")))}
+        prefixes = {r.scope[len("prefix:"):]: r.data for r in s.scalars(
+            select(Setting).where(Setting.scope.like("prefix:%")))}
+        global_row = s.scalar(select(Setting).where(Setting.scope == "global"))
+        return {
+            "config_version": config_push.get_config_version(s),
+            "global": global_row.data if global_row else {},
+            "devices": devices,
+            "prefixes": prefixes,
+            "location_options": config_push.location_options(s),
+            "disk": disk_info(settings.recordings_dir),
+        }
+
+    @app.put("/api/v1/settings/global")
+    def put_global_settings(data: dict, s: Session = Depends(get_db)):
+        try:
+            validated = config_push.validate_settings(data)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from None
+        row = s.scalar(select(Setting).where(Setting.scope == "global"))
+        if row is None:
+            row = Setting(scope="global", data={})
+            s.add(row)
+        row.data = {**row.data, **validated}
+        config_push.bump_config_version(s)
+        log_operation(s, "settings", None, detail="全局设置")
+        s.commit()
+        return {"ok": True, "config_version": config_push.get_config_version(s)}
+
+    @app.put("/api/v1/settings/device/{code}")
+    def put_device_settings(code: str, data: dict, s: Session = Depends(get_db)):
+        if not _CODE_RE.fullmatch(code):
+            raise HTTPException(status_code=422, detail="位置编号只能用英文、数字、连字符")
+        try:
+            validated = config_push.validate_settings(data)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from None
+        row = s.scalar(select(Setting).where(Setting.scope == f"device:{code}"))
+        if row is None:
+            row = Setting(scope=f"device:{code}", data={})
+            s.add(row)
+        row.data = {**row.data, **validated}
+        config_push.bump_config_version(s)
+        log_operation(s, "settings", None, detail=f"设备 {code} 设置")
+        s.commit()
+        return {"ok": True, "config_version": config_push.get_config_version(s)}
+
+    @app.delete("/api/v1/settings/device/{code}")
+    def delete_device_settings(code: str, s: Session = Depends(get_db)):
+        row = s.scalar(select(Setting).where(Setting.scope == f"device:{code}"))
+        if row is not None:
+            s.delete(row)
+            config_push.bump_config_version(s)
+            log_operation(s, "settings", None, detail=f"删除设备 {code} 设置")
+            s.commit()
+        return {"ok": True}
+
+    @app.get("/api/v1/quality")
+    def get_quality():
+        """画质挡位表（前端不写死，从这里取；tasks.md WP4）。"""
+        from everrec_core import profiles
+
+        return {
+            "quality": profiles.quality_table(),
+            "resolutions": [r.value for r in profiles.Resolution],
+            "resolution_sizes": {r.value: list(profiles.RESOLUTION_SIZE[r]) for r in profiles.Resolution},
+            "fps": list(profiles.FPS_STOPS),
+            "recommended_quality": profiles.DEFAULT_QUALITY.value,
+            "recommended_resolution": profiles.RECOMMENDED_RESOLUTION.value,
+            "recommended_fps": profiles.RECOMMENDED_FPS,
+        }
+
+    @app.put("/api/v1/location-options")
+    def put_location_options(data: dict[str, list[str]], s: Session = Depends(get_db)):
+        for level in data:
+            if level not in config_push.LEVELS:
+                raise HTTPException(status_code=422, detail=f"不支持的位置层级：{level}")
+        for row in s.scalars(select(LocationOption)).all():
+            s.delete(row)
+        for level, values in data.items():
+            for v in values:
+                if not _CODE_RE.fullmatch(v):
+                    raise HTTPException(status_code=422, detail="位置选项只能用英文、数字、连字符")
+                s.add(LocationOption(level=level, value=v))
+        config_push.bump_config_version(s)
+        log_operation(s, "settings", None, detail="位置选项")
+        s.commit()
+        return {"ok": True}
 
     if settings.web_dist and settings.web_dist.exists():
         app.mount("/", StaticFiles(directory=settings.web_dist, html=True), name="web")
