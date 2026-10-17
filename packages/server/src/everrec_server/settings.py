@@ -29,6 +29,19 @@ class Settings:
     )
     # 大批同时失联判定为服务器或网络故障（设计文档 6.3）
     mass_lost_ratio: float = 0.8
+    # 滚动覆盖：保留天数、开关、磁盘阈值（设计文档 5.4；第一版全局一套，界面在 WP4）
+    retention_days: int = field(
+        default_factory=lambda: int(os.environ.get("EVERREC_RETENTION_DAYS", "90"))
+    )
+    rollover_enabled: bool = field(
+        default_factory=lambda: os.environ.get("EVERREC_ROLLOVER_ENABLED", "1").lower()
+        not in ("0", "false", "no", "off")
+    )
+    disk_warn_threshold: float = 0.85
+    disk_critical_threshold: float = 0.95
+    retention_seconds: int = field(
+        default_factory=lambda: int(os.environ.get("EVERREC_RETENTION_SECONDS", "3600"))
+    )
     web_dist: Path | None = field(
         default_factory=lambda: Path(p) if (p := os.environ.get("EVERREC_WEB_DIST")) else None
     )

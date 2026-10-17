@@ -31,6 +31,7 @@ from everrec_core.protocol import (
 
 from .db import Recording
 from .deps import get_db
+from .retention import disk_usage_ratio
 
 CHUNK_MAX = 1_048_576  # 分片 ≤ 1 MB，在接口里校验，不依赖 Nginx（设计文档 5.5 措施 6）
 
@@ -151,7 +152,9 @@ def _sha256(path: Path) -> str:
 
 
 @router.post("/uploads", response_model=UploadInitReply)
-def init_upload(req: UploadRequest, request: Request, s: Session = Depends(get_db)) -> UploadInitReply:
+def init_upload(
+    req: UploadRequest, request: Request, s: Session = Depends(get_db)
+) -> UploadInitReply | JSONResponse:
     # 同 code+filename+sha256 已完成直接 done，不重复传（设计文档 5.1）
     already = s.scalar(
         select(Recording.id).where(
@@ -169,6 +172,10 @@ def init_upload(req: UploadRequest, request: Request, s: Session = Depends(get_d
     )
     if already is not None:
         return UploadInitReply(upload_id="", received=0, done=True)
+    settings = request.app.state.settings
+    # 磁盘达到危险阈值（默认 95%）时拒收，Agent 当作暂时不可用处理，录像留本地继续录（设计 5.4）
+    if disk_usage_ratio(settings.recordings_dir) >= settings.disk_critical_threshold:
+        return JSONResponse(status_code=507, content={"error": "服务器磁盘已满，暂时不能接收上传"})
     upload_id, received = _manager(request).init(req)
     return UploadInitReply(upload_id=upload_id, received=received, done=False)
 

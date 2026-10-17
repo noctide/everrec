@@ -21,7 +21,7 @@ import threading
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
-from fastapi import Depends, FastAPI, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -30,8 +30,9 @@ from sqlalchemy.orm import Session, sessionmaker
 from everrec_core.protocol import Heartbeat, HeartbeatReply
 
 from . import __version__
-from .db import Agent, Event, make_session_factory, utcnow
+from .db import Agent, Event, Recording, make_session_factory, utcnow
 from .deps import get_db
+from .retention import disk_usage_ratio, sweep_retention
 from .settings import Settings
 from .status import Status, aware, device_status, transition_event
 from .uploads import UploadManager
@@ -105,10 +106,50 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             except Exception:
                 log.exception("失联判定出错")
 
+    disk_state = "ok"  # ok / warn / critical：只在跨越阈值时产生一次 storage.low 事件
+
+    def retention_once() -> None:
+        """每小时一次：滚动覆盖删除过期分段，并检查服务器磁盘（设计文档 5.4）。"""
+        nonlocal disk_state
+        now = datetime.now(UTC)
+        with SessionLocal() as s:
+            deleted = sweep_retention(
+                s, settings.recordings_dir, settings.retention_days,
+                settings.rollover_enabled, now,
+            )
+            ratio = disk_usage_ratio(settings.recordings_dir)
+            new_state = (
+                "critical" if ratio >= settings.disk_critical_threshold
+                else "warn" if ratio >= settings.disk_warn_threshold
+                else "ok"
+            )
+            if new_state != disk_state:
+                if new_state in ("warn", "critical"):
+                    severity = "critical" if new_state == "critical" else "warning"
+                    summary = f"服务器磁盘空间不足（已用 {ratio:.0%}）"
+                    s.add(Event(type="storage.low", severity=severity, summary=summary,
+                                occurred_at=now, payload={"disk_used": ratio, "level": new_state}))
+                    log.info("事件 storage.low：%s", summary)
+                disk_state = new_state
+            s.commit()
+            if deleted:
+                log.info("滚动覆盖：本次删除 %d 个过期分段", deleted)
+
+    def retention_worker() -> None:
+        while not stop.wait(settings.retention_seconds):
+            try:
+                retention_once()
+            except Exception:
+                log.exception("滚动覆盖/磁盘检查出错")
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        t = threading.Thread(target=sweeper, daemon=True, name="lost-sweeper")
-        t.start()
+        threads = [
+            threading.Thread(target=sweeper, daemon=True, name="lost-sweeper"),
+            threading.Thread(target=retention_worker, daemon=True, name="retention"),
+        ]
+        for t in threads:
+            t.start()
         yield
         stop.set()
 
@@ -117,9 +158,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         docs_url="/api/docs", openapi_url="/api/openapi.json",
     )
     app.state.SessionLocal = SessionLocal
+    app.state.settings = settings
     # 上传会话与补传名额在内存里：首版单 worker；多 worker 需换成 Redis/DB 共享状态
     app.state.upload_manager = UploadManager(settings.recordings_dir, backfill_limit=settings.backfill_limit)
     app.state.sweep_once = sweep_once  # 测试用
+    app.state.retention_once = retention_once  # 测试用
     app.include_router(uploads_router)
 
     @app.get("/healthz")
@@ -177,6 +220,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         total = sum(summary.values())
         mass_lost = total >= 3 and summary[Status.LOST] / total >= settings.mass_lost_ratio
         return DevicesOut(items=out, summary=summary, mass_lost=mass_lost)
+
+    @app.post("/api/v1/recordings/{recording_id}/lock")
+    def lock_recording(recording_id: int, s: Session = Depends(get_db)):
+        """加锁：被加锁的录像不参与滚动覆盖（事故留证，设计 5.4）。登录校验在 WP5 接入。"""
+        rec = s.get(Recording, recording_id)
+        if rec is None:
+            raise HTTPException(status_code=404, detail="没有这段录像")
+        rec.locked = True
+        s.commit()
+        return {"id": rec.id, "locked": True}
+
+    @app.post("/api/v1/recordings/{recording_id}/unlock")
+    def unlock_recording(recording_id: int, s: Session = Depends(get_db)):
+        rec = s.get(Recording, recording_id)
+        if rec is None:
+            raise HTTPException(status_code=404, detail="没有这段录像")
+        rec.locked = False
+        s.commit()
+        return {"id": rec.id, "locked": False}
 
     if settings.web_dist and settings.web_dist.exists():
         app.mount("/", StaticFiles(directory=settings.web_dist, html=True), name="web")
