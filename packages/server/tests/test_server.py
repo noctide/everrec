@@ -19,7 +19,10 @@ def _hb(code="HD-PD-A-3F-012", recording=True, **kw) -> dict:
 
 def _app(tmp_path, lost_after=120):
     url = f"sqlite:///{tmp_path}/t.db"
-    settings = Settings(database_url=url, lost_after_seconds=lost_after, sweep_seconds=3600)
+    settings = Settings(
+        database_url=url, lost_after_seconds=lost_after, sweep_seconds=3600,
+        admin_password="test", secret_key="test-secret",
+    )
     return create_app(settings), url
 
 
@@ -28,9 +31,25 @@ def _events(url):
         return [e.type for e in s.scalars(select(Event).order_by(Event.id))]
 
 
+def _login(c: TestClient) -> None:
+    assert c.post("/api/v1/login", json={"password": "test"}).status_code == 200, "管理员登录失败"
+
+
+def _first_hb(c: TestClient, **kw) -> str:
+    """首次心跳注册设备，返回签发的设备令牌（tasks.md WP5）。"""
+    r = c.post("/agent/v1/heartbeat", json=_hb(**kw))
+    return r.json()["token"]
+
+
+def _next_hb(c: TestClient, token: str, **kw):
+    """带设备令牌的后续心跳。"""
+    return c.post("/agent/v1/heartbeat", json=_hb(**kw), headers={"X-Agent-Token": token})
+
+
 def test_heartbeat_registers_and_lists(tmp_path):
     app, _ = _app(tmp_path)
     with TestClient(app) as c:
+        _login(c)
         assert c.post("/agent/v1/heartbeat", json=_hb()).status_code == 200
         c.post("/agent/v1/heartbeat", json=_hb(code="SUB-B-2F-001", pending_sync=12,
                                                offline_since=datetime.now(UTC).isoformat()))
@@ -43,37 +62,41 @@ def test_heartbeat_registers_and_lists(tmp_path):
 def test_stalled_recording_is_abnormal_and_raises_event(tmp_path):
     app, url = _app(tmp_path)
     with TestClient(app) as c:
-        c.post("/agent/v1/heartbeat", json=_hb())
-        c.post("/agent/v1/heartbeat", json=_hb(recording=False, checks={"dataflow": "fail"},
-                                               problems=["录像文件 31 秒无增长"]))
+        _login(c)
+        token = _first_hb(c)
+        _next_hb(c, token, recording=False, checks={"dataflow": "fail"},
+                 problems=["录像文件 31 秒无增长"])
         d = c.get("/api/v1/devices").json()["items"][0]
         assert d["status"] == "abnormal" and d["problems"]
-        c.post("/agent/v1/heartbeat", json=_hb())
+        _next_hb(c, token)
     assert _events(url) == ["recording.stopped", "device.recovered"]
 
 
 def test_starting_grace_is_not_abnormal(tmp_path):
     app, url = _app(tmp_path)
     with TestClient(app) as c:
-        c.post("/agent/v1/heartbeat", json=_hb(recording=False, starting=True))
+        _login(c)
+        token = _first_hb(c, recording=False, starting=True)
         assert c.get("/api/v1/devices").json()["items"][0]["status"] == "ok"
-        c.post("/agent/v1/heartbeat", json=_hb())
+        _next_hb(c, token)
     assert _events(url) == []
 
 
 def test_lost_detected_by_server_then_recovers(tmp_path):
     app, url = _app(tmp_path, lost_after=0)
     with TestClient(app) as c:
-        c.post("/agent/v1/heartbeat", json=_hb())
+        _login(c)
+        token = _first_hb(c)
         app.state.sweep_once()
         assert c.get("/api/v1/devices").json()["items"][0]["status"] == "lost"
-        c.post("/agent/v1/heartbeat", json=_hb())
+        _next_hb(c, token)
     assert _events(url) == ["device.lost", "device.recovered"]
 
 
 def test_mass_lost_flag(tmp_path):
     app, _ = _app(tmp_path, lost_after=0)
     with TestClient(app) as c:
+        _login(c)
         for i in range(5):
             c.post("/agent/v1/heartbeat", json=_hb(code=f"HD-{i}"))
         assert c.get("/api/v1/devices").json()["mass_lost"] is True

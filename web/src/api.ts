@@ -68,6 +68,30 @@ export async function setRecordingLock(id: number, locked: boolean): Promise<voi
   if (!r.ok) throw new Error(`服务器返回 ${r.status}`);
 }
 
+// ---- 登录（tasks.md WP5） ----
+
+export async function login(password: string): Promise<void> {
+  const r = await fetch("/api/v1/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password }),
+  });
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({}));
+    throw new Error(body.detail ?? `服务器返回 ${r.status}`);
+  }
+}
+
+export async function logout(): Promise<void> {
+  await fetch("/api/v1/logout", { method: "POST" });
+}
+
+/** 探测是否已登录：只有 401 算未登录，其他错误（如服务端 5xx）不拦住页面。 */
+export async function checkAuth(): Promise<boolean> {
+  const r = await fetch("/api/v1/devices");
+  return r.status !== 401;
+}
+
 // ---- 设置页（tasks.md WP4） ----
 
 export interface SettingsState {

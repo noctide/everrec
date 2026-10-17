@@ -56,6 +56,8 @@ class HeartbeatReply(BaseModel):
     settings: dict = {}
     # 位置选项（州/区/楼栋/楼层），供桌面端设置页做下拉（tasks.md WP4）
     location_options: dict = {}
+    # 首次心跳时签发设备令牌；之后所有 /agent/v1/* 需带它（tasks.md WP5）
+    token: str | None = None
 
 
 # ---------- 上传与补传（设计文档 5.1、5.5，接口前缀 /agent/v1） ----------

@@ -10,10 +10,19 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from everrec_core.protocol import UploadRequest
+from everrec_core.protocol import Checks, Heartbeat, UploadRequest
 from everrec_server.db import Event, Recording
 from everrec_server.main import create_app
 from everrec_server.settings import Settings
+
+
+def _register(c: TestClient, code: str = "HD-A-012") -> str:
+    """首次心跳注册设备，返回设备令牌（tasks.md WP5）。"""
+    r = c.post("/agent/v1/heartbeat", json=Heartbeat(
+        code=code, hostname="PC-01", agent_version="0.1.0", sent_at=datetime.now(UTC),
+        recording=True, profile="720P / 10 帧", checks=Checks(),
+    ).model_dump(mode="json"))
+    return r.json()["token"]
 
 
 def _settings(tmp_path, **kw) -> Settings:
@@ -104,7 +113,9 @@ def test_upload_rejected_when_disk_critical(tmp_path, monkeypatch):
         size=1, sha256=hashlib.sha256(b"x").hexdigest(), integrity="ok", channel="realtime",
     )
     with TestClient(app) as c:
-        r = c.post("/agent/v1/uploads", json=req.model_dump(mode="json"))
+        token = _register(c)
+        r = c.post("/agent/v1/uploads", json=req.model_dump(mode="json"),
+                   headers={"X-Agent-Token": token})
         assert r.status_code == 507
 
 
@@ -119,7 +130,9 @@ def test_upload_allowed_below_critical(tmp_path, monkeypatch):
         size=1, sha256=hashlib.sha256(b"x").hexdigest(), integrity="ok", channel="realtime",
     )
     with TestClient(app) as c:
-        r = c.post("/agent/v1/uploads", json=req.model_dump(mode="json"))
+        token = _register(c)
+        r = c.post("/agent/v1/uploads", json=req.model_dump(mode="json"),
+                   headers={"X-Agent-Token": token})
         assert r.status_code == 200
 
 
@@ -146,13 +159,14 @@ def test_disk_warn_event_only_once(tmp_path, monkeypatch):
 
 
 def test_lock_and_unlock(tmp_path):
-    settings = _settings(tmp_path)
+    settings = _settings(tmp_path, admin_password="test")
     app = create_app(settings)
     now = datetime.now(UTC)
     with Session(create_engine(settings.database_url)) as s:
         rid, _ = _add_recording(s, settings, "HD-A-012", now - timedelta(days=1))
 
     with TestClient(app) as c:
+        assert c.post("/api/v1/login", json={"password": "test"}).status_code == 200
         assert c.post(f"/api/v1/recordings/{rid}/lock").json()["locked"] is True
         assert c.post(f"/api/v1/recordings/{rid}/unlock").json()["locked"] is False
         assert c.post("/api/v1/recordings/99999/lock").status_code == 404

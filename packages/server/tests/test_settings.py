@@ -24,13 +24,20 @@ def _app(tmp_path):
         recordings_dir=tmp_path / "recordings",
         sweep_seconds=3600,
         retention_seconds=3600,
+        admin_password="test",
+        secret_key="test-secret",
     )
     return create_app(settings)
+
+
+def _login(c: TestClient) -> None:
+    assert c.post("/api/v1/login", json={"password": "test"}).status_code == 200, "管理员登录失败"
 
 
 def test_settings_roundtrip_and_version_bumps(tmp_path):
     app = _app(tmp_path)
     with TestClient(app) as c:
+        _login(c)
         assert c.get("/api/v1/settings").json()["config_version"] == 0
         r = c.put("/api/v1/settings/global", json={"quality": "lean", "watermark": False})
         assert r.status_code == 200
@@ -43,6 +50,7 @@ def test_settings_roundtrip_and_version_bumps(tmp_path):
 def test_settings_reject_invalid_values(tmp_path):
     app = _app(tmp_path)
     with TestClient(app) as c:
+        _login(c)
         assert c.put("/api/v1/settings/global", json={"quality": "ultra"}).status_code == 422
         assert c.put("/api/v1/settings/global", json={"resolution": "4k"}).status_code == 422
         assert c.put("/api/v1/settings/global", json={"fps": 30}).status_code == 422
@@ -52,6 +60,7 @@ def test_settings_reject_invalid_values(tmp_path):
 def test_global_settings_pushed_in_heartbeat(tmp_path):
     app = _app(tmp_path)
     with TestClient(app) as c:
+        _login(c)
         c.put("/api/v1/settings/global", json={"quality": "lean"})
         reply = c.post("/agent/v1/heartbeat", json=_hb()).json()
         assert reply["config_version"] == 1
@@ -61,6 +70,7 @@ def test_global_settings_pushed_in_heartbeat(tmp_path):
 def test_device_override_pushed_only_to_that_device(tmp_path):
     app = _app(tmp_path)
     with TestClient(app) as c:
+        _login(c)
         c.put("/api/v1/settings/global", json={"quality": "standard"})
         c.put("/api/v1/settings/device/HD-A-012", json={"quality": "lean"})
         a = c.post("/agent/v1/heartbeat", json=_hb(code="HD-A-012")).json()
@@ -72,6 +82,7 @@ def test_device_override_pushed_only_to_that_device(tmp_path):
 def test_retention_not_pushed_to_agent(tmp_path):
     app = _app(tmp_path)
     with TestClient(app) as c:
+        _login(c)
         c.put("/api/v1/settings/global", json={"retention_days": 30, "quality": "saver"})
         reply = c.post("/agent/v1/heartbeat", json=_hb()).json()
         assert "retention_days" not in reply["settings"], "保留天数是服务端设置，不下发"
@@ -81,6 +92,7 @@ def test_retention_not_pushed_to_agent(tmp_path):
 def test_location_options_roundtrip(tmp_path):
     app = _app(tmp_path)
     with TestClient(app) as c:
+        _login(c)
         loc = {"state": ["HD"], "district": ["PD"], "building": ["A"], "floor": ["3F"]}
         c.put("/api/v1/location-options", json=loc)
         reply = c.post("/agent/v1/heartbeat", json=_hb()).json()
@@ -91,6 +103,7 @@ def test_location_options_roundtrip(tmp_path):
 def test_quality_endpoint(tmp_path):
     app = _app(tmp_path)
     with TestClient(app) as c:
+        _login(c)
         q = c.get("/api/v1/quality").json()
         assert len(q["quality"]) == 5
         assert q["resolutions"] == ["360p", "480p", "720p", "1080p"]
@@ -101,6 +114,7 @@ def test_quality_endpoint(tmp_path):
 def test_delete_device_override(tmp_path):
     app = _app(tmp_path)
     with TestClient(app) as c:
+        _login(c)
         c.put("/api/v1/settings/device/HD-A-012", json={"quality": "lean"})
         assert c.get("/api/v1/settings").json()["devices"]["HD-A-012"]["quality"] == "lean"
         c.delete("/api/v1/settings/device/HD-A-012")

@@ -146,6 +146,10 @@ class Uploader:
         self.buckets["realtime"].set_rate(realtime_bps / 8)
         self.buckets["backfill"].set_rate(backfill_bps / 8)
 
+    def set_token(self, token: str) -> None:
+        """设置设备令牌，所有上传请求带上 X-Agent-Token（tasks.md WP5）。"""
+        self.http.headers["X-Agent-Token"] = token
+
     def stop(self, timeout: float = 15.0) -> None:
         """尽量把队列送完再退出；送不完的留在本地，下次启动补传。"""
         deadline = time.monotonic() + timeout

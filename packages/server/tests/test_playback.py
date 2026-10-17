@@ -12,7 +12,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from everrec_core.ffmpeg import ffmpeg_binary
-from everrec_core.protocol import UploadRequest
+from everrec_core.protocol import Checks, Heartbeat, UploadRequest
 from everrec_server.db import OperationLog, Recording
 from everrec_server.main import create_app
 from everrec_server.settings import Settings
@@ -24,8 +24,23 @@ def _app(tmp_path):
         recordings_dir=tmp_path / "recordings",
         sweep_seconds=3600,
         retention_seconds=3600,
+        admin_password="test",
+        secret_key="test-secret",
     )
     return create_app(settings), settings
+
+
+def _register(c: TestClient, code: str = "HD-A-012") -> str:
+    """首次心跳注册设备，返回设备令牌（tasks.md WP5）。"""
+    r = c.post("/agent/v1/heartbeat", json=Heartbeat(
+        code=code, hostname="PC-01", agent_version="0.1.0", sent_at=datetime.now(UTC),
+        recording=True, profile="720P / 10 帧", checks=Checks(),
+    ).model_dump(mode="json"))
+    return r.json()["token"]
+
+
+def _login(c: TestClient) -> None:
+    assert c.post("/api/v1/login", json={"password": "test"}).status_code == 200, "管理员登录失败"
 
 
 def _make_ts(path: Path, seconds: int = 2) -> bytes:
@@ -53,7 +68,9 @@ def _req(content: bytes, **kw) -> UploadRequest:
 
 
 def _upload(c: TestClient, content: bytes, req: UploadRequest) -> int:
-    uid = c.post("/agent/v1/uploads", json=req.model_dump(mode="json")).json()["upload_id"]
+    token = _register(c, req.code)
+    uid = c.post("/agent/v1/uploads", json=req.model_dump(mode="json"),
+                 headers={"X-Agent-Token": token}).json()["upload_id"]
     assert c.put(f"/agent/v1/uploads/{uid}?offset=0", content=content).status_code == 200
     comp = c.post(f"/agent/v1/uploads/{uid}/complete")
     assert comp.status_code == 200, comp.text
@@ -100,6 +117,7 @@ def test_file_endpoint_serves_range_206(tmp_path):
     rid, p = _add_recording(settings, "HD-A-012", datetime(2026, 10, 15, 9, 0, tzinfo=UTC),
                             content=b"0123456789" * 30)
     with TestClient(app) as c:
+        _login(c)
         full = c.get(f"/api/v1/recordings/{rid}/file")
         assert full.status_code == 200 and len(full.content) == 300
         r = c.get(f"/api/v1/recordings/{rid}/file", headers={"Range": "bytes=0-99"})
@@ -115,6 +133,7 @@ def test_list_recordings_filters(tmp_path):
     _add_recording(settings, "HD-B-001", t.replace(hour=9, minute=0))
 
     with TestClient(app) as c:
+        _login(c)
         r = c.get("/api/v1/recordings", params={
             "code": "HD-A-012",
             "from": t.replace(hour=8).isoformat(),
@@ -129,6 +148,7 @@ def test_download_writes_operation_log(tmp_path):
     app, settings = _app(tmp_path)
     rid, _ = _add_recording(settings, "HD-A-012", datetime(2026, 10, 15, 9, 0, tzinfo=UTC))
     with TestClient(app) as c:
+        _login(c)
         r = c.get(f"/api/v1/recordings/{rid}/download")
         assert r.status_code == 200
         assert r.headers.get("content-disposition", "").startswith("attachment")
@@ -141,6 +161,7 @@ def test_view_writes_operation_log(tmp_path):
     app, settings = _app(tmp_path)
     rid, _ = _add_recording(settings, "HD-A-012", datetime(2026, 10, 15, 9, 0, tzinfo=UTC))
     with TestClient(app) as c:
+        _login(c)
         assert c.get(f"/api/v1/recordings/{rid}/file").status_code == 200
     with Session(create_engine(settings.database_url)) as s:
         log = s.scalar(select(OperationLog).where(OperationLog.action == "view"))
@@ -151,6 +172,7 @@ def test_lock_writes_operation_log(tmp_path):
     app, settings = _app(tmp_path)
     rid, _ = _add_recording(settings, "HD-A-012", datetime(2026, 10, 15, 9, 0, tzinfo=UTC))
     with TestClient(app) as c:
+        _login(c)
         assert c.post(f"/api/v1/recordings/{rid}/lock").status_code == 200
     with Session(create_engine(settings.database_url)) as s:
         log = s.scalar(select(OperationLog).where(OperationLog.action == "lock"))

@@ -42,6 +42,16 @@ class Settings:
     retention_seconds: int = field(
         default_factory=lambda: int(os.environ.get("EVERREC_RETENTION_SECONDS", "3600"))
     )
+    # 认证（tasks.md WP5）：管理员密码、只读 API 令牌、会话签名密钥
+    admin_password: str = field(
+        default_factory=lambda: os.environ.get("EVERREC_ADMIN_PASSWORD", "")
+    )
+    api_token: str = field(
+        default_factory=lambda: os.environ.get("EVERREC_API_TOKEN", "")
+    )
+    secret_key: str = field(
+        default_factory=lambda: os.environ.get("EVERREC_SECRET_KEY", "")
+    )
     web_dist: Path | None = field(
         default_factory=lambda: Path(p) if (p := os.environ.get("EVERREC_WEB_DIST")) else None
     )

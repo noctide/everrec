@@ -31,7 +31,8 @@ from everrec_core.protocol import (
     UploadRequest,
 )
 
-from .db import Recording
+from . import auth
+from .db import Agent, Recording
 from .deps import get_db
 from .retention import disk_usage_ratio
 
@@ -159,6 +160,12 @@ def _sha256(path: Path) -> str:
 def init_upload(
     req: UploadRequest, request: Request, s: Session = Depends(get_db)
 ) -> UploadInitReply | JSONResponse:
+    # 校验设备令牌（tasks.md WP5）：吊销或缺失都拒绝
+    agent = s.scalar(select(Agent).where(Agent.code == req.code))
+    if agent is None or not auth.verify_agent_token(
+        request.headers.get("X-Agent-Token", ""), agent.token_hash
+    ):
+        raise HTTPException(status_code=401, detail="设备凭据无效")
     # 同 code+filename+sha256 已完成直接 done，不重复传（设计文档 5.1）
     already = s.scalar(
         select(Recording.id).where(

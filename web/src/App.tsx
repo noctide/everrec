@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
+import { checkAuth, logout } from "./api";
 import DeviceWall from "./DeviceWall";
+import Login from "./Login";
 import Playback from "./Playback";
 import Settings from "./Settings";
 
@@ -12,12 +14,30 @@ function route(): "wall" | "playback" | "settings" {
 
 export default function App() {
   const [page, setPage] = useState<"wall" | "playback" | "settings">(route());
+  // 未登录时 /api/v1/* 全 401，先探测再决定是否渲染页面（tasks.md WP5）
+  const [auth, setAuth] = useState<"checking" | "in" | "out">("checking");
+
+  useEffect(() => {
+    let alive = true;
+    checkAuth().then((ok) => alive && setAuth(ok ? "in" : "out"));
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     const onHash = () => setPage(route());
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
+
+  if (auth === "checking") return null;
+  if (auth === "out") return <Login onLogin={() => setAuth("in")} />;
+
+  async function signOut() {
+    await logout();
+    setAuth("out");
+  }
 
   return (
     <div className="app">
@@ -34,6 +54,7 @@ export default function App() {
           <a className={page === "playback" ? "active" : ""} href="#/playback">录像回放</a>
           <a className={page === "settings" ? "active" : ""} href="#/settings">设置</a>
         </nav>
+        <button className="btn topbar-out" onClick={signOut}>退出登录</button>
       </header>
       {page === "wall" ? <DeviceWall /> : page === "playback" ? <Playback /> : <Settings />}
     </div>

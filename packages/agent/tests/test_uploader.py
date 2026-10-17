@@ -21,6 +21,7 @@ from everrec_agent.index import IndexEntry, SegmentIndex
 from everrec_agent.uploader import Uploader
 from everrec_core.config import AgentConfig, Camera, CameraType, Location, Recording
 from everrec_core.ffmpeg import ffmpeg_binary
+from everrec_core.protocol import Checks, Heartbeat
 from everrec_server.db import Recording as ServerRecording
 from everrec_server.main import create_app
 from everrec_server.settings import Settings
@@ -84,6 +85,16 @@ def _wait_until(cond, timeout: float = 5.0) -> None:
     raise AssertionError("条件在超时内没有满足")
 
 
+def _register(base_url: str, code: str = "HD-A-012") -> str:
+    """首次心跳注册设备，返回签发的设备令牌（tasks.md WP5）。"""
+    r = httpx.post(f"{base_url}/agent/v1/heartbeat", json=Heartbeat(
+        code=code, hostname="PC-01", agent_version="0.1.0", sent_at=datetime.now().astimezone(),
+        recording=True, profile="720P / 10 帧", checks=Checks(),
+    ).model_dump(mode="json"))
+    r.raise_for_status()
+    return r.json()["token"]
+
+
 def test_uploads_then_deletes_local_file(tmp_path: Path, cfg):
     app, settings = _app(tmp_path)
     server = _Server(app)
@@ -91,6 +102,7 @@ def test_uploads_then_deletes_local_file(tmp_path: Path, cfg):
     try:
         index = SegmentIndex(cfg.state_dir)
         up = Uploader(cfg, index, realtime_bps=10**9, backfill_bps=10**9)
+        up.set_token(_register(server.base_url))
 
         seg = cfg.recordings_dir / "HD-A-012" / "2026" / "10" / "15" / "HD-A-012_091000.ts"
         seg.parent.mkdir(parents=True, exist_ok=True)
@@ -146,6 +158,7 @@ def test_rate_limit_throttles(tmp_path: Path, cfg):
         index = SegmentIndex(cfg.state_dir)
         # 8 KB/s 的限速，两片 8 KB 共 16 KB：第二片要等约 1 秒
         up = Uploader(cfg, index, realtime_bps=65536, chunk=8192)
+        up.set_token(_register(server.base_url))
 
         seg = cfg.recordings_dir / "HD-A-012_091000.ts"
         seg.parent.mkdir(parents=True, exist_ok=True)

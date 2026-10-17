@@ -18,13 +18,14 @@ from __future__ import annotations
 
 import logging
 import re
+import secrets
 import threading
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -32,11 +33,12 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from everrec_core.protocol import Heartbeat, HeartbeatReply
 
-from . import __version__, config_push
+from . import __version__, auth, config_push
 from .db import (
     Agent,
     Event,
     LocationOption,
+    Meta,
     OperationLog,
     Recording,
     Setting,
@@ -111,6 +113,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
     SessionLocal: sessionmaker = make_session_factory(settings.database_url)
     stop = threading.Event()
+    session_secret = settings.secret_key or secrets.token_hex(32)  # 没配就用每次启动随机的密钥
+
+    def _ensure_admin_hash() -> None:
+        """把管理员密码哈希存进 meta 表（只存哈希）。"""
+        if not settings.admin_password:
+            return
+        with SessionLocal() as s:
+            h = auth.hash_password(settings.admin_password)
+            row = s.get(Meta, "admin_password_hash")
+            if row is not None:
+                row.value = h
+            else:
+                s.add(Meta(key="admin_password_hash", value=h))
+            s.commit()
+
+    def _verify_admin(s: Session, password: str) -> bool:
+        row = s.get(Meta, "admin_password_hash")
+        return row is not None and auth.verify_password(password, row.value)
+
+    def _valid_session(request: Request) -> bool:
+        token = request.cookies.get(auth.SESSION_COOKIE)
+        return bool(token) and auth.verify_session_token(token, session_secret)
+
+    def _valid_bearer(request: Request) -> bool:
+        if not settings.api_token:
+            return False
+        return request.headers.get("Authorization", "") == f"Bearer {settings.api_token}"
 
     def record_transition(s: Session, agent: Agent, new: Status, now: datetime) -> None:
         ev = transition_event(agent.status, new, settings.lost_after_seconds)
@@ -199,22 +228,75 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.sweep_once = sweep_once  # 测试用
     app.state.retention_once = retention_once  # 测试用
     app.include_router(uploads_router)
+    _ensure_admin_hash()
+
+    @app.middleware("http")
+    async def auth_middleware(request: Request, call_next):
+        """除 /healthz、登录接口外，/api/v1/* 都要登录；/devices 另接受只读 API 令牌。"""
+        path = request.url.path
+        if path.startswith("/api/v1/"):
+            if path == "/api/v1/login":
+                return await call_next(request)
+            if path == "/api/v1/devices" and _valid_bearer(request):
+                return await call_next(request)
+            if not _valid_session(request):
+                return JSONResponse(status_code=401, content={"detail": "未登录"})
+        return await call_next(request)
+
+    @app.post("/api/v1/login")
+    def login(payload: dict, s: Session = Depends(get_db)):
+        password = payload.get("password", "")
+        if not _verify_admin(s, password):
+            raise HTTPException(status_code=401, detail="密码不对")
+        log_operation(s, "login", None, user="admin")
+        s.commit()
+        token = auth.make_session_token(session_secret)
+        resp = JSONResponse({"ok": True})
+        resp.set_cookie(
+            auth.SESSION_COOKIE, token, httponly=True, samesite="lax",
+            max_age=auth.SESSION_TTL, path="/",
+        )
+        return resp
+
+    @app.post("/api/v1/logout")
+    def logout():
+        resp = JSONResponse({"ok": True})
+        resp.delete_cookie(auth.SESSION_COOKIE, path="/")
+        return resp
+
+    @app.post("/api/v1/devices/{code}/revoke")
+    def revoke_device(code: str, s: Session = Depends(get_db)):
+        """吊销设备令牌：该 Agent 之后心跳/上传被拒，但本地照常录制（tasks.md WP5）。"""
+        agent = s.scalar(select(Agent).where(Agent.code == code))
+        if agent is None:
+            raise HTTPException(status_code=404, detail="没有这台设备")
+        agent.token_hash = None
+        log_operation(s, "settings", None, detail=f"吊销设备 {code}")
+        s.commit()
+        return {"ok": True}
 
     @app.get("/healthz")
     def healthz():
         return {"ok": True, "version": __version__}
 
     @app.post("/agent/v1/heartbeat", response_model=HeartbeatReply)
-    def heartbeat(hb: Heartbeat, s: Session = Depends(get_db)):
-        # TODO 第一版：Agent 注册后的独立凭据校验（设计文档第 15 节）
+    def heartbeat(hb: Heartbeat, request: Request, s: Session = Depends(get_db)):
         now = utcnow()
         agent = s.scalar(select(Agent).where(Agent.code == hb.code))
+        token: str | None = None
         if agent is None:
+            # 新设备：注册并签发设备令牌（只存哈希）
+            token, token_hash = auth.new_agent_token()
             agent = Agent(code=hb.code, hostname=hb.hostname, version=hb.agent_version,
-                          status=Status.OK, last_payload={}, recent_logs=[])
+                          status=Status.OK, last_payload={}, recent_logs=[], token_hash=token_hash)
             s.add(agent)
             s.flush()
             log.info("新设备注册：%s（%s）", hb.code, hb.hostname)
+        else:
+            # 已注册：校验设备令牌（吊销或缺失都拒绝）
+            presented = request.headers.get("X-Agent-Token", "")
+            if not auth.verify_agent_token(presented, agent.token_hash):
+                raise HTTPException(status_code=401, detail="设备凭据无效")
         agent.hostname, agent.version, agent.last_heartbeat = hb.hostname, hb.agent_version, now
         agent.last_payload = hb.model_dump(mode="json", exclude={"recent_logs"})
         if hb.recent_logs:
@@ -225,6 +307,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             config_version=config_push.get_config_version(s),
             settings=config_push.agent_settings(config_push.effective_settings(s, hb.code)),
             location_options=config_push.location_options(s),
+            token=token,
         )
         s.commit()
         return reply

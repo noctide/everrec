@@ -114,6 +114,20 @@ button.primary, a.btn, .btn {
 }
 button.primary { height: 40px; border-color: transparent; background: var(--accent); color: #fff; font-weight: 500; justify-content: center; }
 button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+.topbar-out { margin-left: auto; height: 32px; }
+
+/* 登录页（tasks.md WP5） */
+.login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.login-card {
+  width: 100%; max-width: 360px; padding: 32px 28px; box-sizing: border-box;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--bg);
+  display: flex; flex-direction: column; gap: 14px;
+}
+.login-brand { justify-content: center; }
+.login-card h1 { margin: 0 0 6px; text-align: center; font-size: 20px; }
+.login-card label { font-size: 13px; color: var(--muted); }
+.login-card input { height: 38px; border: 1px solid var(--line); border-radius: 6px; padding: 0 12px; font-size: 14px; }
+.login-error { margin: 0; font-size: 13px; color: var(--strong); }
 .playback-main {
   flex: 999 1 560px; min-width: 0; padding: 24px 28px 40px; box-sizing: border-box;
   display: flex; flex-direction: column; gap: 20px;

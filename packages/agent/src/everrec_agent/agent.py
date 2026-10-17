@@ -59,6 +59,9 @@ class Agent:
         self._encoding_note: str | None = None
         self._camera_resolutions: list[str] = []
         self.uploader = Uploader(cfg, self.index) if cfg.server else None
+        self.agent_token = self._load_agent_token()
+        if self.uploader and self.agent_token:
+            self.uploader.set_token(self.agent_token)
         self._config_version = 0
         self._server_settings: dict | None = None  # 待应用的下发配置
         self._load_cached_server_config()
@@ -113,6 +116,23 @@ class Agent:
             log.warning(note)
 
     # ---------- 服务器下发配置 ----------
+
+    def _load_agent_token(self) -> str | None:
+        """读设备令牌（tasks.md WP5）；没有则返回 None，等首次心跳签发。"""
+        path = self.cfg.state_dir / "agent_token"
+        if not path.exists():
+            return None
+        try:
+            return path.read_text(encoding="utf-8").strip() or None
+        except OSError:
+            return None
+
+    def _save_agent_token(self, token: str) -> None:
+        path = self.cfg.state_dir / "agent_token"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(token, encoding="utf-8")
+        tmp.replace(path)
 
     def _load_cached_server_config(self) -> None:
         """启动时读缓存的服务器配置：离线也沿用最后一次收到的档位。"""
@@ -274,9 +294,11 @@ class Agent:
         hb = self.build_heartbeat()
         server = self.cfg.server
         url = server.rstrip("/") + "/agent/v1/heartbeat"
+        headers = {"Content-Type": "application/json"}
+        if self.agent_token:
+            headers["X-Agent-Token"] = self.agent_token
         try:
-            r = httpx.post(url, content=hb.model_dump_json(), timeout=5,
-                           headers={"Content-Type": "application/json"})
+            r = httpx.post(url, content=hb.model_dump_json(), timeout=5, headers=headers)
             r.raise_for_status()
             reply = HeartbeatReply.model_validate(r.json())
             if server != self.cfg.server:
@@ -284,6 +306,12 @@ class Agent:
             if self.online is False:
                 log.info("已重新连上服务器（离线开始于 %s），开始补传", self.offline_since)
             self.online = True
+            # 首次心跳签发设备令牌：存下来，之后所有 /agent/v1/* 都带上（tasks.md WP5）
+            if reply.token and reply.token != self.agent_token:
+                self.agent_token = reply.token
+                self._save_agent_token(reply.token)
+                if self.uploader:
+                    self.uploader.set_token(reply.token)
             # 配置版本变了就缓存并在下一分段边界应用（设计文档 7、tasks.md WP4）
             if reply.settings and reply.config_version != self._config_version:
                 self._cache_server_config(reply)

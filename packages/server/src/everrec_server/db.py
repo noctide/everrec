@@ -28,6 +28,7 @@ class Agent(Base):
     status: Mapped[str] = mapped_column(String(16), default="ok")  # 上次判定的状态，用于发现变化
     last_payload: Mapped[dict] = mapped_column(JSON, default=dict)
     recent_logs: Mapped[list] = mapped_column(JSON, default=list)
+    token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)  # 设备令牌哈希（WP5）
 
 
 class Event(Base):
