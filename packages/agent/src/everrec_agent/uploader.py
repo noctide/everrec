@@ -1,7 +1,7 @@
 """上传后台线程（设计文档 5.1、5.5）。
 
 分段归档后进队列，后台线程负责上传；主循环不阻塞。
-- 两个队列，实时优先于补传（设计 5.5 措施 2：刚录完的始终先传）。
+- 实时和补传各有后台线程，补传等待名额或退避不阻塞新分段。
 - 补传先向服务器申请名额、默认 4 Mbps；实时始终允许、默认 1 Mbps。
 - 分片续传：每片 ≤ 1 MB，中断后向服务器问已收到多少，从断点继续，不重传已完成部分。
 - 限速用令牌桶，按字节计；连接失败指数退避 + 随机抖动（5 秒起，上限 5 分钟）。
@@ -42,6 +42,10 @@ RETRYABLE_STATUS = {404, 409, 429}
 
 
 class _Stopped(Exception):
+    pass
+
+
+class _TargetChanged(Exception):
     pass
 
 
@@ -99,18 +103,36 @@ class Uploader:
         }
         self._realtime: queue.Queue[UploadJob] = queue.Queue()
         self._backfill: queue.Queue[UploadJob] = queue.Queue()
-        self._active = False
+        self._target_lock = threading.Lock()
+        self._generation = 0
+        self._queue_lock = threading.Lock()
+        self._queued: set[str] = set()
         self._stop = threading.Event()
-        self._thread = threading.Thread(target=self._run, daemon=True, name="uploader")
+        self._threads = [
+            threading.Thread(target=self._run, args=(channel,), daemon=True, name=f"uploader-{channel}")
+            for channel in self.buckets
+        ]
+        self._workers_left = len(self._threads)
 
     # ---------- 对外 ----------
 
     def start(self) -> None:
         # 先把上次运行没送出去的分段放进补传队列（旧到新）
-        pending = [e for e in self.index.entries() if e.status != "synced" and Path(e.path).exists()]
+        try:
+            pending = [e for e in self.index.entries() if e.status != "synced" and Path(e.path).exists()]
+        except OSError:
+            log.exception("读取待传索引失败，继续本地录像")
+            pending = []
         for e in sorted(pending, key=lambda x: x.started_at):
-            self._backfill.put(UploadJob(e, "backfill"))
-        self._thread.start()
+            self.enqueue(e, "backfill")
+        for thread in self._threads:
+            thread.start()
+
+    def set_server(self, server: str) -> None:
+        """切换上传目标；正在传的旧目标任务不能确认或删除本地文件。"""
+        with self._target_lock:
+            self.base = server.rstrip("/")
+            self._generation += 1
 
     def stop(self, timeout: float = 15.0) -> None:
         """尽量把队列送完再退出；送不完的留在本地，下次启动补传。"""
@@ -118,50 +140,56 @@ class Uploader:
         while self._inflight() and time.monotonic() < deadline:
             time.sleep(0.05)
         self._stop.set()
-        self._thread.join(timeout=3)
-        self.http.close()
+        for thread in self._threads:
+            thread.join(timeout=1.5)
 
     def _inflight(self) -> bool:
-        return self._realtime.qsize() > 0 or self._backfill.qsize() > 0 or self._active
+        with self._queue_lock:
+            return bool(self._queued)
 
     def enqueue(self, entry: IndexEntry, channel: str) -> None:
+        with self._queue_lock:
+            if entry.path in self._queued:
+                return
+            self._queued.add(entry.path)
         q = self._realtime if channel == "realtime" else self._backfill
         q.put(UploadJob(entry, channel))
 
-    def has_backlog(self) -> bool:
-        return self._backfill.qsize() > 0 or self._realtime.qsize() > 0
-
     # ---------- 内部 ----------
 
-    def _run(self) -> None:
-        while not self._stop.is_set():
-            job = self._next_job()
-            if job is None:
-                continue
-            self._active = True
-            try:
-                self._retry_until_done(job)
-            finally:
-                self._active = False
-
-    def _next_job(self) -> UploadJob | None:
-        """实时优先；实时空时才从补传队列取（阻塞，便于被 stop 唤醒）。"""
+    def _run(self, channel: str) -> None:
+        q = self._realtime if channel == "realtime" else self._backfill
         try:
-            return self._realtime.get_nowait()
-        except queue.Empty:
-            pass
-        try:
-            return self._backfill.get(timeout=1.0)
-        except queue.Empty:
-            return None
+            while not self._stop.is_set():
+                try:
+                    job = q.get(timeout=0.2)
+                except queue.Empty:
+                    continue
+                try:
+                    self._retry_until_done(job)
+                finally:
+                    with self._queue_lock:
+                        self._queued.discard(job.entry.path)
+        finally:
+            with self._queue_lock:
+                self._workers_left -= 1
+                if not self._workers_left:
+                    self.http.close()
 
     def _retry_until_done(self, job: UploadJob) -> None:
         backoff = self.backoff_min
         permanent = 0
         while not self._stop.is_set():
+            generation = self._generation
+            if not self.base:
+                self._stop.wait(0.2)
+                continue
             try:
                 self._upload_one(job)
                 return
+            except _TargetChanged:
+                backoff, permanent = self.backoff_min, 0
+                continue
             except _Stopped:
                 return
             except FileNotFoundError:
@@ -180,7 +208,7 @@ class Uploader:
                 err = e
             wait = backoff + random.uniform(0, backoff)
             log.warning("上传 %s 失败：%s；%.0f 秒后重试", job.entry.path, err, wait)
-            self._stop.wait(wait)
+            self._wait_retry(wait, generation)
             backoff = min(backoff * 2, self.backoff_max)
 
     @staticmethod
@@ -189,32 +217,54 @@ class Uploader:
         return 400 <= code < 500 and code not in RETRYABLE_STATUS
 
     def _upload_one(self, job: UploadJob) -> None:
-        token = self._acquire_slot() if job.channel == "backfill" else None
+        with self._target_lock:
+            base, generation = self.base, self._generation
+        if not base:
+            raise _TargetChanged
+        token = self._acquire_slot(base, generation) if job.channel == "backfill" else None
         try:
-            self._do_upload(job.entry, job.channel)
+            self._do_upload(job.entry, job.channel, base, generation)
+        except (httpx.HTTPError, OSError):
+            self._check_target(generation)
+            raise
         finally:
             if token:
-                self._release_slot(token)
+                self._release_slot(token, base)
 
-    def _acquire_slot(self) -> str:
+    def _acquire_slot(self, base: str, generation: int) -> str:
         while not self._stop.is_set():
-            r = self.http.post(f"{self.base}/agent/v1/backfill-slot")
+            self._check_target(generation)
+            r = self.http.post(f"{base}/agent/v1/backfill-slot")
             if r.status_code == 200:
                 return r.json()["token"]
             if r.status_code == 429:
                 wait = float(r.headers.get("Retry-After", SLOT_RETRY_AFTER))
-                self._stop.wait(wait)
+                self._wait_retry(wait, generation)
                 continue
             r.raise_for_status()
         raise _Stopped
 
-    def _release_slot(self, token: str) -> None:
+    def _release_slot(self, token: str, base: str) -> None:
         try:
-            self.http.post(f"{self.base}/agent/v1/backfill-slot/{token}/release")
+            self.http.post(f"{base}/agent/v1/backfill-slot/{token}/release", timeout=5)
         except httpx.HTTPError:
             pass  # 释放失败无所谓，名额会自己过期
 
-    def _do_upload(self, entry: IndexEntry, channel: str) -> None:
+    def _wait_retry(self, seconds: float, generation: int) -> None:
+        deadline = time.monotonic() + seconds
+        while generation == self._generation and not self._stop.is_set():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            self._stop.wait(min(0.2, remaining))
+
+    def _check_target(self, generation: int) -> None:
+        if self._stop.is_set():
+            raise _Stopped
+        if generation != self._generation:
+            raise _TargetChanged
+
+    def _do_upload(self, entry: IndexEntry, channel: str, base: str, generation: int) -> None:
         path = Path(entry.path)
         sha, size = self._hash(path)
         started = datetime.fromisoformat(entry.started_at).astimezone()  # 本地墙钟 → 带时区
@@ -231,9 +281,10 @@ class Uploader:
             channel=channel,
         )
 
-        init = self._init(req)
+        self._check_target(generation)
+        init = self._init(req, base)
         if init.done:
-            self._finish(entry, path)
+            self._finish(entry, path, generation)
             return
 
         bucket = self.buckets[channel]
@@ -241,6 +292,7 @@ class Uploader:
         with path.open("rb") as f:
             f.seek(offset)
             while offset < size:
+                self._check_target(generation)
                 chunk = f.read(self.chunk)
                 if not chunk:
                     break
@@ -250,7 +302,7 @@ class Uploader:
                     if self._stop.is_set():
                         raise _Stopped
                 r = self.http.put(
-                    f"{self.base}/agent/v1/uploads/{init.upload_id}",
+                    f"{base}/agent/v1/uploads/{init.upload_id}",
                     params={"offset": offset},
                     content=chunk,
                 )
@@ -261,19 +313,22 @@ class Uploader:
                 r.raise_for_status()
                 offset += len(chunk)
 
-        r = self.http.post(f"{self.base}/agent/v1/uploads/{init.upload_id}/complete")
+        self._check_target(generation)
+        r = self.http.post(f"{base}/agent/v1/uploads/{init.upload_id}/complete")
         r.raise_for_status()  # 422（校验失败）也抛 HTTPStatusError，外层退避后从头重传
         UploadCompleteReply.model_validate(r.json())
-        self._finish(entry, path)
+        self._finish(entry, path, generation)
 
-    def _finish(self, entry: IndexEntry, path: Path) -> None:
+    def _finish(self, entry: IndexEntry, path: Path, generation: int) -> None:
         """校验成功后删本地文件、标 synced（设计文档 5.1）。"""
-        path.unlink(missing_ok=True)
-        self.index.update(entry.path, status="synced")
+        with self._target_lock:
+            self._check_target(generation)
+            path.unlink(missing_ok=True)
+            self.index.update(entry.path, status="synced")
         log.info("上传完成并删除本地分段：%s", entry.path)
 
-    def _init(self, req: UploadRequest) -> UploadInitReply:
-        r = self.http.post(f"{self.base}/agent/v1/uploads", json=req.model_dump(mode="json"))
+    def _init(self, req: UploadRequest, base: str) -> UploadInitReply:
+        r = self.http.post(f"{base}/agent/v1/uploads", json=req.model_dump(mode="json"))
         r.raise_for_status()
         return UploadInitReply.model_validate(r.json())
 

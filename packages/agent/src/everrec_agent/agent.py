@@ -84,14 +84,14 @@ class Agent:
         fixed_dir = spool_dir(self.cfg) / "_fixed"
         res = repair.repair_file(seg.path, fixed_dir)
         if res.integrity == repair.Integrity.OK:
-            self._archive(seg, res.integrity)
+            self._archive(seg, res.integrity, "backfill")
             return
         log.warning("分段 %s：%s（方法 %s）", seg.path.name, res.friendly, res.method)
         quarantine.mkdir(parents=True, exist_ok=True)
         seg.path.replace(quarantine / seg.path.name)  # 原文件进隔离目录，不删除
         if res.output:
             fixed = type(seg)(res.output, seg.code, seg.started_at)
-            self._archive(fixed, res.integrity)
+            self._archive(fixed, res.integrity, "backfill")
 
     def _probe_camera(self) -> None:
         """记下实际录制画质和摄像头支持的分辨率（心跳上报，设置页据此置灰挡位）。"""
@@ -110,15 +110,14 @@ class Agent:
 
     # ---------- 每一轮 ----------
 
-    def _archive(self, seg, integrity: str = "ok") -> None:
+    def _archive(self, seg, integrity: str = "ok", channel: str = "realtime") -> None:
         dest = archive_segment(self.cfg.recordings_dir, seg)
         entry = IndexEntry(str(dest), seg.started_at.isoformat(), dest.stat().st_size, str(integrity))
         self.index.add(entry)
         log.info("分段已归档：%s", dest.relative_to(self.cfg.recordings_dir))
         if self.uploader:
-            # 离线或还有积压时走补传（先申请名额、4 Mbps），否则实时（1 Mbps）
-            backlogged = self.offline_since is not None or self.uploader.has_backlog()
-            channel = "backfill" if backlogged else "realtime"
+            if self.online is False:
+                channel = "backfill"  # 断网期间积压走补传；恢复后的新分段仍走实时
             self.uploader.enqueue(entry, channel)
 
     def archive_finished(self) -> None:
@@ -215,12 +214,15 @@ class Agent:
 
     def send_heartbeat(self) -> None:
         hb = self.build_heartbeat()
-        url = self.cfg.server.rstrip("/") + "/agent/v1/heartbeat"
+        server = self.cfg.server
+        url = server.rstrip("/") + "/agent/v1/heartbeat"
         try:
             r = httpx.post(url, content=hb.model_dump_json(), timeout=5,
                            headers={"Content-Type": "application/json"})
             r.raise_for_status()
             HeartbeatReply.model_validate(r.json())  # 第一版：下发配置在此接入
+            if server != self.cfg.server:
+                return  # 旧服务器的回复不能覆盖切换后的连接状态
             if self.online is False:
                 log.info("已重新连上服务器（离线开始于 %s），开始补传", self.offline_since)
             self.online = True
@@ -228,6 +230,8 @@ class Agent:
             if self.offline_since and hb.pending_sync <= 1:
                 self.offline_since = None
         except (httpx.HTTPError, ValueError) as e:
+            if server != self.cfg.server:
+                return
             if self.online is not False:
                 log.warning("连不上服务器，继续在本地录制：%s", e)
                 self.offline_since = self.offline_since or datetime.now().astimezone()
@@ -261,12 +265,12 @@ class Agent:
         for w in self.cfg.config_warnings:
             log.warning("配置文件有误：%s", w)
         self._probe_camera()
-        if self.uploader:
-            self.uploader.start()  # 先扫上次没送出去的积压，再起线程
         self.recover_spool()
         self.recorder.start()
         self.watcher.reset()
         try:
+            if self.uploader:
+                self.uploader.start()  # 上传恢复失败不能阻止本地录制启动
             while not self.stop_event.wait(TICK_SECONDS):
                 try:
                     self.tick()

@@ -8,9 +8,12 @@ status 取值与服务端一致：local / syncing / synced / failed（设计文�
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
+
+log = logging.getLogger("index")
 
 
 @dataclass
@@ -29,14 +32,22 @@ class SegmentIndex:
         self._compact_every = compact_every
         self._appends = 0
         self._lock = threading.Lock()
+        self._bad_lines: set[int] = set()
 
     def _read_locked(self) -> dict[str, IndexEntry]:
         if not self.file.exists():
             return {}
         latest: dict[str, IndexEntry] = {}
-        for line in self.file.read_text(encoding="utf-8").splitlines():
+        lines = self.file.read_text(encoding="utf-8", errors="replace").splitlines()
+        for number, line in enumerate(lines, 1):
             if line.strip():
-                e = IndexEntry(**json.loads(line))
+                try:
+                    e = IndexEntry(**json.loads(line))
+                except (ValueError, TypeError):
+                    if number not in self._bad_lines:
+                        log.warning("录像索引第 %d 行不完整或已损坏，跳过；录像文件保留", number)
+                        self._bad_lines.add(number)
+                    continue
                 latest[e.path] = e  # 同一路径后写的覆盖先写的
         return latest
 
@@ -52,7 +63,16 @@ class SegmentIndex:
             self._append_locked({**asdict(latest), **fields})
 
     def _append_locked(self, data: dict) -> None:
+        # 断电可能留下没有换行的半行；下一条记录必须从新行开始。
+        if self.file.exists() and self.file.stat().st_size:
+            with self.file.open("rb") as f:
+                f.seek(-1, 2)
+                needs_newline = f.read(1) != b"\n"
+        else:
+            needs_newline = False
         with self.file.open("a", encoding="utf-8") as f:
+            if needs_newline:
+                f.write("\n")
             f.write(json.dumps(data, ensure_ascii=False) + "\n")
         self._appends += 1
         if self._appends >= self._compact_every:
@@ -67,6 +87,7 @@ class SegmentIndex:
             for e in sorted(latest.values(), key=lambda x: x.path):
                 f.write(json.dumps(asdict(e), ensure_ascii=False) + "\n")
         tmp.replace(self.file)
+        self._bad_lines.clear()
 
     def entries(self) -> list[IndexEntry]:
         with self._lock:

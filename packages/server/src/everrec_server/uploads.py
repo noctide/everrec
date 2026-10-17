@@ -18,7 +18,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from everrec_core.protocol import (
@@ -157,7 +157,14 @@ def init_upload(req: UploadRequest, request: Request, s: Session = Depends(get_d
         select(Recording.id).where(
             Recording.code == req.code,
             Recording.sha256 == req.sha256,
-            Recording.path.endswith(req.filename),
+            or_(
+                Recording.source_filename == req.filename,
+                and_(
+                    Recording.source_filename.is_(None),
+                    or_(Recording.path.endswith("/" + req.filename, autoescape=True),
+                        Recording.path.endswith("\\" + req.filename, autoescape=True)),
+                ),
+            ),
         )
     )
     if already is not None:
@@ -219,6 +226,7 @@ def complete_upload(
     rec = Recording(
         code=meta.code,
         path=str(dest),
+        source_filename=meta.filename,
         start_at=meta.started_at,
         end_at=meta.ended_at,
         size=meta.size,

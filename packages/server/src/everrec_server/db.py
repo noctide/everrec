@@ -54,6 +54,7 @@ class Recording(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     code: Mapped[str] = mapped_column(String(64), index=True)
     path: Mapped[str] = mapped_column(String(512))
+    source_filename: Mapped[str | None] = mapped_column(String(128), nullable=True)
     start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     size: Mapped[int] = mapped_column(BigInteger)

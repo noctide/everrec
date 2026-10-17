@@ -3,6 +3,7 @@
 import subprocess
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -10,7 +11,7 @@ import pytest
 from everrec_agent.agent import Agent
 from everrec_core.config import AgentConfig, Camera, CameraType, Location, Recording
 from everrec_core.ffmpeg import ffmpeg_binary, spool_dir
-from everrec_core.segments import iter_archived, list_spool
+from everrec_core.segments import iter_archived, list_spool, parse_spool_name
 
 
 @pytest.fixture
@@ -81,3 +82,22 @@ def test_recovers_interrupted_segment_on_startup(cfg):
     integrities = {Path(e.path).name: e.integrity for e in Agent(cfg).index.entries()}
     assert integrities["HD-A-012_090000.ts"] == "ok"
     assert integrities["HD-A-012_090500.ts"] in ("repaired", "partial")
+
+
+@pytest.mark.parametrize("online,expected", [(False, "backfill"), (True, "realtime")])
+def test_new_segments_use_realtime_after_connection_recovers(cfg, monkeypatch, online, expected):
+    cfg.server = "http://test"
+    agent = Agent(cfg)
+    agent.online = online
+    agent.offline_since = datetime.now().astimezone()
+    channels = []
+    monkeypatch.setattr(agent.uploader, "enqueue", lambda _entry, channel: channels.append(channel))
+    spool = spool_dir(cfg)
+    spool.mkdir(parents=True)
+    path = spool / "HD-A-012_20261015_090000.ts"
+    path.write_bytes(b"sample")
+    try:
+        agent._archive(parse_spool_name(path))
+        assert channels == [expected]
+    finally:
+        agent.uploader.http.close()

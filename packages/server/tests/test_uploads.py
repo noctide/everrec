@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 from datetime import UTC, datetime
 
+from alembic import command
+from alembic.config import Config
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
@@ -12,6 +14,7 @@ from sqlalchemy.orm import Session
 from everrec_core.protocol import UploadRequest
 from everrec_server.db import Recording
 from everrec_server.main import create_app
+from everrec_server.migrations import _ALEMBIC_DIR, run_migrations
 from everrec_server.settings import Settings
 
 
@@ -145,3 +148,41 @@ def test_startup_cleans_stale_incoming(tmp_path):
     stale.write_bytes(b"half-done")
     create_app(settings)
     assert not stale.exists()
+
+
+def test_duplicate_after_filename_collision_is_done(tmp_path):
+    app, url, settings = _app(tmp_path)
+    with TestClient(app) as c:
+        for content in (b"original", b"different"):
+            req = _req(content).model_dump(mode="json")
+            uid = c.post("/agent/v1/uploads", json=req).json()["upload_id"]
+            assert c.put(f"/agent/v1/uploads/{uid}?offset=0", content=content).status_code == 200
+            assert c.post(f"/agent/v1/uploads/{uid}/complete").status_code == 200
+        again = c.post("/agent/v1/uploads", json=req).json()
+        assert again["done"] is True
+    assert len(list(settings.recordings_dir.rglob("*.ts"))) == 2
+    with Session(create_engine(url)) as s:
+        rows = s.scalars(select(Recording)).all()
+        assert len(rows) == 2
+        assert all(r.source_filename == req["filename"] for r in rows)
+
+
+def test_legacy_recording_still_deduplicates_after_migration(tmp_path):
+    url = f"sqlite:///{tmp_path}/legacy.db"
+    config = Config()
+    config.set_main_option("script_location", str(_ALEMBIC_DIR))
+    config.set_main_option("sqlalchemy.url", url)
+    command.upgrade(config, "0002")
+    content = b"old"
+    req = _req(content)
+    with create_engine(url).begin() as connection:
+        connection.exec_driver_sql(
+            "INSERT INTO recording (code, path, start_at, end_at, size, sha256, integrity, status, locked) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (req.code, "/recordings/" + req.filename, req.started_at.isoformat(), req.ended_at.isoformat(),
+             len(content), req.sha256, "ok", "synced", False),
+        )
+    run_migrations(url)
+    app = create_app(Settings(database_url=url, recordings_dir=tmp_path / "recordings"))
+    with TestClient(app) as c:
+        assert c.post("/agent/v1/uploads", json=req.model_dump(mode="json")).json()["done"]

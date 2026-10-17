@@ -274,17 +274,29 @@ def test_permanent_rejection_marks_failed(tmp_path: Path, cfg):
     assert seg.exists(), "标 failed 的文件不删，留给下次启动重试"
 
 
-def test_realtime_queue_has_priority(tmp_path: Path, cfg):
+def test_realtime_does_not_wait_for_backfill_slot(tmp_path: Path, cfg, monkeypatch):
     index = SegmentIndex(cfg.state_dir)
-    up = Uploader(cfg, index, http=httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(404))))
+    waiting = threading.Event()
+    uploaded = threading.Event()
+
+    def handler(request):
+        if request.url.path == "/agent/v1/backfill-slot":
+            waiting.set()
+            return httpx.Response(429, headers={"Retry-After": "60"})
+        return httpx.Response(404)
+
+    up = Uploader(cfg, index, http=httpx.Client(transport=httpx.MockTransport(handler)))
+    monkeypatch.setattr(up, "_do_upload", lambda *args: uploaded.set())
     e_back = IndexEntry("HD-A-012_091000.ts", "2026-10-15T09:00:00", 1, "ok")
     e_rt = IndexEntry("HD-A-012_091005.ts", "2026-10-15T09:00:05", 1, "ok")
     up.enqueue(e_back, "backfill")
-    up.enqueue(e_rt, "realtime")
-    first = up._next_job()
-    second = up._next_job()
-    assert first is not None and first.entry.path == "HD-A-012_091005.ts", "实时要优先于补传"
-    assert second is not None and second.entry.path == "HD-A-012_091000.ts"
+    up.start()
+    try:
+        assert waiting.wait(2)
+        up.enqueue(e_rt, "realtime")
+        assert uploaded.wait(2), "补传名额满不能阻塞实时上传"
+    finally:
+        up.stop(timeout=0)
 
 
 def test_ended_at_uses_actual_duration(tmp_path: Path, cfg):
@@ -340,3 +352,89 @@ def test_index_compacts(tmp_path: Path):
     assert len(lines) == 3, "压缩后每个路径只留最新一行"
     statuses = {e.path: e.status for e in idx.entries()}
     assert statuses == {"a.ts": "synced", "b.ts": "synced", "c.ts": "local"}
+
+
+def test_torn_index_keeps_good_entries_and_accepts_new_records(tmp_path):
+    index = SegmentIndex(tmp_path, compact_every=3)
+    index.add(IndexEntry("a.ts", "2026-10-15T09:00:00", 10, "ok"))
+    with index.file.open("ab") as f:
+        f.write(b'{"path":"broken-\xe4')
+    assert [e.path for e in index.entries()] == ["a.ts"]
+    index.add(IndexEntry("b.ts", "2026-10-15T09:05:00", 20, "ok"))
+    index.update("a.ts", status="synced")
+    assert {e.path: e.status for e in index.entries()} == {"a.ts": "synced", "b.ts": "local"}
+    assert len(index.file.read_text(encoding="utf-8").splitlines()) == 2
+
+
+def test_unreadable_index_does_not_prevent_upload_workers_starting(tmp_path, cfg, monkeypatch):
+    index = SegmentIndex(cfg.state_dir)
+
+    def unreadable():
+        raise OSError("索引暂时不可读")
+
+    monkeypatch.setattr(index, "entries", unreadable)
+    up = Uploader(cfg, index)
+    up.start()
+    try:
+        assert all(t.is_alive() for t in up._threads)
+    finally:
+        up.stop(timeout=0)
+
+
+def test_realtime_continues_while_backfill_retries(cfg, monkeypatch):
+    index = SegmentIndex(cfg.state_dir)
+    up = Uploader(cfg, index, backoff_min=60)
+    failed = threading.Event()
+    uploaded = threading.Event()
+
+    def upload(job):
+        if job.channel == "backfill":
+            failed.set()
+            raise httpx.ConnectError("补传连接失败")
+        uploaded.set()
+
+    monkeypatch.setattr(up, "_upload_one", upload)
+    up.enqueue(IndexEntry("old.ts", "2026-10-15T09:00:00", 1, "ok"), "backfill")
+    up.start()
+    try:
+        assert failed.wait(2)
+        up.enqueue(IndexEntry("new.ts", "2026-10-15T09:05:00", 1, "ok"), "realtime")
+        assert uploaded.wait(2)
+    finally:
+        up.stop(timeout=0)
+
+
+def test_server_switch_keeps_file_until_new_server_confirms(cfg, monkeypatch):
+    index = SegmentIndex(cfg.state_dir)
+    seg = cfg.recordings_dir / "HD-A-012_091000.ts"
+    seg.parent.mkdir(parents=True)
+    seg.write_bytes(b"data")
+    entry = IndexEntry(str(seg), "2026-10-15T09:00:00", 4, "ok")
+    index.add(entry)
+    hosts = []
+    switched = threading.Event()
+
+    def handler(request):
+        if request.url.path == "/agent/v1/uploads":
+            hosts.append(request.url.host)
+            return httpx.Response(200, json={"upload_id": "u", "received": 0})
+        if request.url.path.endswith("/complete"):
+            if request.url.host == "test":
+                up.set_server("")
+                switched.set()
+            return httpx.Response(200, json={"recording_id": 1})
+        return httpx.Response(200, json={"received": 4})
+
+    monkeypatch.setattr("everrec_agent.uploader.probe_duration", lambda _p: 1.0)
+    up = Uploader(cfg, index, http=httpx.Client(transport=httpx.MockTransport(handler)),
+                  realtime_bps=10**9)
+    up.enqueue(entry, "realtime")
+    up.start()
+    try:
+        assert switched.wait(2)
+        assert seg.exists() and index.pending_count() == 1
+        up.set_server("http://new-server")
+        _wait_until(lambda: not seg.exists() and index.pending_count() == 0)
+        assert hosts == ["test", "new-server"]
+    finally:
+        up.stop(timeout=0)
