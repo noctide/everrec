@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, create_engine
+from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, String, create_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 
@@ -46,8 +46,27 @@ class Event(Base):
     detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class Recording(Base):
+    """录像分段索引（设计文档第 11 节）。到服务器的分段一定已校验，status 恒为 synced。"""
+
+    __tablename__ = "recording"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(64), index=True)
+    path: Mapped[str] = mapped_column(String(512))
+    start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    size: Mapped[int] = mapped_column(BigInteger)
+    sha256: Mapped[str] = mapped_column(String(64), index=True)
+    integrity: Mapped[str] = mapped_column(String(16))  # ok / repaired / partial
+    status: Mapped[str] = mapped_column(String(16), default="synced")
+    locked: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
 def make_session_factory(url: str) -> sessionmaker:
     kwargs = {"connect_args": {"check_same_thread": False}} if url.startswith("sqlite") else {}
     engine = create_engine(url, **kwargs)
-    Base.metadata.create_all(engine)  # 骨架阶段直接建表；正式版改用 Alembic 迁移
+    from .migrations import run_migrations  # 延迟导入，避免 Alembic 的初始化开销
+
+    run_migrations(url)
     return sessionmaker(engine, expire_on_commit=False)

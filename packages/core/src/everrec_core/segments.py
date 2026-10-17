@@ -70,17 +70,28 @@ def enforce_quota(
     quota_bytes: int,
     can_delete: Callable[[Path], bool] = lambda _p: True,
 ) -> list[Path]:
-    """超过本地配额时从最旧开始删，只删 can_delete 允许的（例如已同步的）。返回删除的文件。"""
+    """超过本地配额时从最旧开始删，只删 can_delete 允许的（例如已同步的）。返回删除的文件。
+
+    上传线程会并发删掉刚同步完的文件，这里对"文件突然没了"要容忍，不能因此报错。
+    """
     files = list(iter_archived(recordings_dir))
-    total = sum(p.stat().st_size for p in files)
+    total = 0
+    for p in files:
+        try:
+            total += p.stat().st_size
+        except FileNotFoundError:
+            continue
     deleted: list[Path] = []
     for p in files:
         if total <= quota_bytes:
             break
         if not can_delete(p):
             continue
-        size = p.stat().st_size
-        p.unlink()
+        try:
+            size = p.stat().st_size
+            p.unlink()
+        except FileNotFoundError:
+            continue  # 已经没了（被上传线程删掉），跳过
         total -= size
         deleted.append(p)
     return deleted

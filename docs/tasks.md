@@ -81,6 +81,7 @@
 - 接口：`GET /api/v1/recordings?code=&from=&to=`（按时间查分段）；`GET /api/v1/recordings/{id}/file`（必须支持 HTTP Range，Starlette 的 `FileResponse` 已支持，需写测试确认 206）；导出（多段合并下载，可第二步做）。
 - 回放页照 `design/source/Playback.dc.html` 和 `design/screenshots/02-playback.png`：按位置编号和日期检索、播放器、24 小时时间轴（标出缺口和修复片段）、分段列表、加锁按钮。
 - 查看和下载写入操作日志（表结构简单即可，WP5 的登录用户名写入）。
+- 已知偏差：分段文件名的 `started_at` 是落盘时刻，比画面实际开始晚约 1 秒（10 帧时约 1 秒、5 帧时约 3 秒，是编码器先攒几帧再输出造成的，与分段长短无关）。时间轴/按时间检索时可按这个量微调，录像本身一帧不少。
 - **验收**：用 WP1 端到端产生的录像，回放页能连续播放一个时间段、时间轴缺口位置正确；Range 请求返回 206。
 
 ---

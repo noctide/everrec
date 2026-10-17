@@ -2,6 +2,10 @@
 
 内部接口（只给 Agent 用）：
   POST /agent/v1/heartbeat
+  POST /agent/v1/uploads             开始/续传一个分段
+  PUT  /agent/v1/uploads/{id}?offset= 分片续传
+  POST /agent/v1/uploads/{id}/complete 校验并入库
+  POST /agent/v1/backfill-slot        申请补传名额
 对外接口（第一版只有这一个，设计文档 8.6）：
   GET  /api/v1/devices
 另有：
@@ -27,8 +31,11 @@ from everrec_core.protocol import Heartbeat, HeartbeatReply
 
 from . import __version__
 from .db import Agent, Event, make_session_factory, utcnow
+from .deps import get_db
 from .settings import Settings
 from .status import Status, aware, device_status, transition_event
+from .uploads import UploadManager
+from .uploads import router as uploads_router
 
 log = logging.getLogger("everrec.server")
 
@@ -68,10 +75,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
     SessionLocal: sessionmaker = make_session_factory(settings.database_url)
     stop = threading.Event()
-
-    def get_db():
-        with SessionLocal() as s:
-            yield s
 
     def record_transition(s: Session, agent: Agent, new: Status, now: datetime) -> None:
         ev = transition_event(agent.status, new, settings.lost_after_seconds)
@@ -113,7 +116,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         title="EverRec 服务端", version=__version__, lifespan=lifespan,
         docs_url="/api/docs", openapi_url="/api/openapi.json",
     )
+    app.state.SessionLocal = SessionLocal
+    # 上传会话与补传名额在内存里：首版单 worker；多 worker 需换成 Redis/DB 共享状态
+    app.state.upload_manager = UploadManager(settings.recordings_dir, backfill_limit=settings.backfill_limit)
     app.state.sweep_once = sweep_once  # 测试用
+    app.include_router(uploads_router)
 
     @app.get("/healthz")
     def healthz():
