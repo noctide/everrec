@@ -75,6 +75,24 @@ uv run everrec-agent run -c ./demo/config/everrec.yaml
 
 开发管理网站时用 `cd web && npm run dev`，`/api` 会自动转发到 8080。
 
+## 打包与安装（Windows）
+
+用 PyInstaller 打 4 个程序（Agent、客户端、托盘、修复工具），Inno Setup 打安装包，GitHub Actions（`windows-latest`）自动产出。本地在 Windows 上打包：
+
+```powershell
+# 装打包工具
+uv pip install pyinstaller
+# 下 FFmpeg（含 libx264）到 third_party\ffmpeg\，下 WinSW 到 packaging\windows\winsw\
+# 打包 4 个程序 + 放 FFmpeg 到各自 bin\
+powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1 -FfmpegDir third_party\ffmpeg
+# 编译安装包（iscc 随 Inno Setup 6 安装）
+iscc packaging\windows\everrec.iss
+```
+
+安装包默认装 `D:\EverRec`，没有 D 盘退 `C:\EverRec` 并把本地配额调小；升级和卸载保留 `recordings`、`config`、`logs`。静默安装：`EverRecSetup-x.y.z.exe /VERYSILENT /SERVER=https://服务器 /LOCATION=012`。
+
+**许可注意**：安装包里的 FFmpeg 带 libx264，适用 GPL。公司内部使用没有问题；若以后对外分发，需按 GPL 处理或改用其他编码器（见设计文档第 12 节）。
+
 ## 骨架进度
 
 | 部分 | 已有 | 下一步 |
