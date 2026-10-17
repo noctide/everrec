@@ -114,3 +114,34 @@ def test_chunk_over_1mb_rejected(tmp_path):
     with TestClient(app) as c:
         uid = c.post("/agent/v1/uploads", json=_req(big).model_dump(mode="json")).json()["upload_id"]
         assert c.put(f"/agent/v1/uploads/{uid}", params={"offset": 0}, content=big).status_code == 413
+
+
+def test_rejects_path_traversal_code(tmp_path):
+    app, *_ = _app(tmp_path)
+    data = _req(b"x").model_dump(mode="json")
+    data["code"] = "../../etc"
+    with TestClient(app) as c:
+        assert c.post("/agent/v1/uploads", json=data).status_code == 422
+
+
+def test_rejects_bad_filename(tmp_path):
+    app, *_ = _app(tmp_path)
+    for bad in ("../../evil.ts", "evil.ts", "HD-A-012_09.ts", "HD-A-012_091000.mp4"):
+        data = _req(b"x").model_dump(mode="json")
+        data["filename"] = bad
+        with TestClient(app) as c:
+            assert c.post("/agent/v1/uploads", json=data).status_code == 422, bad
+
+
+def test_startup_cleans_stale_incoming(tmp_path):
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path}/t.db",
+        recordings_dir=tmp_path / "recordings",
+        sweep_seconds=3600,
+    )
+    incoming = settings.recordings_dir / "_incoming"
+    incoming.mkdir(parents=True, exist_ok=True)
+    stale = incoming / "leftover.part"
+    stale.write_bytes(b"half-done")
+    create_app(settings)
+    assert not stale.exists()

@@ -52,6 +52,9 @@ class UploadManager:
         self.recordings_dir = recordings_dir
         self.incoming = recordings_dir / INCOMING_DIRNAME
         self.incoming.mkdir(parents=True, exist_ok=True)
+        # 上次进程留下的半截文件（会话状态在内存里，重启即失效）直接清掉
+        for stale in self.incoming.glob("*.part"):
+            stale.unlink(missing_ok=True)
         self.backfill_limit = backfill_limit
         self.slot_ttl = slot_ttl_seconds
         self._sessions: dict[str, UploadSession] = {}
@@ -204,6 +207,10 @@ def complete_upload(
         manager.recordings_dir / meta.code
         / f"{started:%Y}" / f"{started:%m}" / f"{started:%d}" / meta.filename
     )
+    # 兜底：协议校验之外再确认目标路径落在录像目录内，防任何越权
+    if not dest.resolve().is_relative_to(manager.recordings_dir.resolve()):
+        manager.discard(upload_id)
+        raise HTTPException(status_code=400, detail="非法目标路径")
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists():  # 同一文件名（罕见）：加后缀，不覆盖
         dest = dest.with_name(f"{dest.stem}_{uuid.uuid4().hex[:6]}{dest.suffix}")

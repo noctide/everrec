@@ -1,7 +1,8 @@
 """本地录像索引：每个归档分段一行 JSON，记录完整性和同步状态。
 
 status 取值与服务端一致：local / syncing / synced / failed（设计文档第 11 节）。
-追加式写入：同一路径的状态变化追加一行，读时后者覆盖前者。
+追加式写入，同一路径的状态变化追加一行、读时后者覆盖前者；行数攒多了就压缩，
+只保留每个路径的最新一行，避免文件只增不减、越读越慢。
 """
 
 from __future__ import annotations
@@ -22,9 +23,11 @@ class IndexEntry:
 
 
 class SegmentIndex:
-    def __init__(self, state_dir: Path):
+    def __init__(self, state_dir: Path, compact_every: int = 2000):
         state_dir.mkdir(parents=True, exist_ok=True)
         self.file = state_dir / "segments.jsonl"
+        self._compact_every = compact_every
+        self._appends = 0
         self._lock = threading.Lock()
 
     def _read_locked(self) -> dict[str, IndexEntry]:
@@ -38,17 +41,32 @@ class SegmentIndex:
         return latest
 
     def add(self, entry: IndexEntry) -> None:
-        with self._lock, self.file.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(asdict(entry), ensure_ascii=False) + "\n")
+        with self._lock:
+            self._append_locked(asdict(entry))
 
     def update(self, path: str, **fields) -> None:
-        """追加一行覆盖同一路径的最新状态（上传完成后标 synced）。"""
         with self._lock:
             latest = self._read_locked().get(path)
             if latest is None:
                 return
-            with self.file.open("a", encoding="utf-8") as f:
-                f.write(json.dumps({**asdict(latest), **fields}, ensure_ascii=False) + "\n")
+            self._append_locked({**asdict(latest), **fields})
+
+    def _append_locked(self, data: dict) -> None:
+        with self.file.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(data, ensure_ascii=False) + "\n")
+        self._appends += 1
+        if self._appends >= self._compact_every:
+            self._compact_locked()
+            self._appends = 0
+
+    def _compact_locked(self) -> None:
+        """只保留每个路径的最新一行。"""
+        latest = self._read_locked()
+        tmp = self.file.with_name(self.file.name + ".tmp")
+        with tmp.open("w", encoding="utf-8") as f:
+            for e in sorted(latest.values(), key=lambda x: x.path):
+                f.write(json.dumps(asdict(e), ensure_ascii=False) + "\n")
+        tmp.replace(self.file)
 
     def entries(self) -> list[IndexEntry]:
         with self._lock:

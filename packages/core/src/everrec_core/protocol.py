@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .health import Check
 
@@ -57,6 +58,9 @@ class HeartbeatReply(BaseModel):
 
 # ---------- 上传与补传（设计文档 5.1、5.5，接口前缀 /agent/v1） ----------
 
+# 位置编号只用英文、数字、连字符（会进文件路径）；上传接口据此防 ../ 越权
+_CODE_RE = re.compile(r"^[A-Za-z0-9-]+$")
+
 
 class UploadRequest(BaseModel):
     code: str
@@ -67,6 +71,21 @@ class UploadRequest(BaseModel):
     sha256: str
     integrity: str  # ok / repaired / partial
     channel: str    # realtime / backfill
+
+    @field_validator("code")
+    @classmethod
+    def _code(cls, v: str) -> str:
+        v = v.strip()
+        if not _CODE_RE.match(v):
+            raise ValueError("位置编号只能用英文、数字、连字符")
+        return v
+
+    @model_validator(mode="after")
+    def _filename(self) -> UploadRequest:
+        # 文件名必须是 <编号>_HHmmss.ts，可带归档重名时加的数字后缀（segments.archive_segment）
+        if not re.fullmatch(rf"{re.escape(self.code)}_\d{{6}}(_\d+)?\.ts", self.filename):
+            raise ValueError("文件名不符合 编号_时分秒.ts 的格式")
+        return self
 
 
 class UploadInitReply(BaseModel):
