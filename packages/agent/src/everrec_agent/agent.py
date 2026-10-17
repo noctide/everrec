@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import platform
 import threading
@@ -22,7 +23,7 @@ from pathlib import Path
 import httpx
 
 from everrec_core import repair
-from everrec_core.config import AgentConfig
+from everrec_core.config import AgentConfig, load_config
 from everrec_core.ffmpeg import camera_device, effective_encoding, list_camera_modes, spool_dir
 from everrec_core.health import Check, GrowthWatcher, storage_check
 from everrec_core.protocol import Checks, Heartbeat, HeartbeatReply
@@ -61,6 +62,10 @@ class Agent:
         self._encoding_note: str | None = None
         self._camera_resolutions: list[str] = []
         self.uploader = Uploader(cfg, self.index) if cfg.server else None
+        self._config_mtime = (
+            cfg.config_path.stat().st_mtime if cfg.config_path and cfg.config_path.exists() else 0.0
+        )
+        self._config_dirty = False
 
     # ---------- 启动 ----------
 
@@ -129,6 +134,8 @@ class Agent:
         finished = segs[:-1] if self.recorder.running else []
         for seg in finished:
             self._archive(seg)
+        if finished and self._config_dirty:
+            self._apply_config()  # 分段边界到了，应用新配置
 
     def enforce_local_quota(self) -> None:
         quota = int(self.cfg.recording.local_quota_gb * 1024**3)
@@ -273,14 +280,76 @@ class Agent:
         self._thumb_thread = threading.Thread(target=self.send_thumbnail, daemon=True)
         self._thumb_thread.start()
 
+    def write_status(self) -> None:
+        """每轮把状态原子写入 state/status.json，供桌面端托盘/客户端只读显示。
+
+        内容 = 心跳字段 + online；不含日志（界面从日志目录读）。
+        """
+        hb = Heartbeat(
+            code=self.cfg.code,
+            hostname=platform.node(),
+            agent_version=__version__,
+            sent_at=datetime.now().astimezone(),
+            recording=self.recording,
+            starting=self.starting,
+            profile=self._encoding_label,
+            camera_resolutions=self._camera_resolutions,
+            current_segment=self.watcher.current_segment,
+            checks=self.checks,
+            problems=self.problems,
+            restarts=self.recorder.restarts,
+            pending_sync=self.index.pending_count(),
+            disk_used=round(self.disk_used, 3),
+            offline_since=self.offline_since,
+        )
+        data = hb.model_dump(mode="json")
+        data["online"] = bool(self.online)
+        path = self.cfg.state_dir / "status.json"
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(path)  # 原子替换，避免界面读到写一半的文件
+
+    def _check_config_change(self) -> None:
+        """配置文件被改动就标记，等下一个分段边界再应用（设计 4.6）。"""
+        p = self.cfg.config_path
+        if not p or not p.exists():
+            return
+        mtime = p.stat().st_mtime
+        if mtime != self._config_mtime:
+            self._config_mtime = mtime
+            self._config_dirty = True
+
+    def _apply_config(self) -> None:
+        """在分段边界应用新配置：重载并重启录制。录像文件夹/位置首版不热切换。"""
+        self._config_dirty = False
+        try:
+            new_cfg = load_config(self.cfg.config_path)
+        except Exception as e:
+            log.warning("重载配置失败，沿用旧配置：%s", e)
+            return
+        folder = self.cfg.recording.folder  # 录像目录是本地设置，不跟着配置热切换
+        self.cfg.recording = new_cfg.recording
+        self.cfg.recording.folder = folder
+        self.cfg.camera = new_cfg.camera
+        self.cfg.server = new_cfg.server
+        self.cfg.location = new_cfg.location
+        self.cfg.config_warnings = new_cfg.config_warnings
+        self._encoding_label = self.cfg.recording.encoding.label
+        for w in self.cfg.config_warnings:
+            log.warning("配置文件有误：%s", w)
+        self._probe_camera()
+        self.recorder.restart("配置已更新，按新档位录制")
+
     # ---------- 运行 ----------
 
     def tick(self) -> None:
+        self._check_config_change()
         self.run_checks()
         self.archive_finished()
         self.enforce_local_quota()
         self.maybe_heartbeat()
         self.maybe_thumbnail()
+        self.write_status()
 
     def run(self) -> None:
         log.info("EverRec Agent %s 启动，位置编号 %s，录像目录 %s，错峰偏移 %d 秒",
