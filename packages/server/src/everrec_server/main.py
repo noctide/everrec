@@ -24,6 +24,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -41,6 +42,7 @@ from .db import (
     Meta,
     OperationLog,
     Recording,
+    Relay,
     Setting,
     make_session_factory,
     utcnow,
@@ -153,10 +155,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # TODO 第一版：投递到推送地址（发件箱 + 重试，设计文档 8.5）
 
     def sweep_once() -> None:
-        """后台判定失联。失联只能由服务器发现。"""
+        """后台判定失联。失联只能由服务器发现。中转节点上的设备由 relay 判定并镜像事件，这里跳过。"""
         now = datetime.now(UTC)
         with SessionLocal() as s:
-            agents = s.scalars(select(Agent)).all()
+            agents = s.scalars(select(Agent).where(Agent.via == "local")).all()
             for a in agents:
                 new = device_status(a, now, settings.lost_after_seconds)
                 if new is Status.LOST and a.status != Status.LOST:
@@ -206,11 +208,141 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             except Exception:
                 log.exception("滚动覆盖/磁盘检查出错")
 
+    # ---------- 中转节点拉取（tasks.md WP10） ----------
+
+    def _ensure_relay_rows() -> None:
+        """启动时把配置里的中转节点同步进 relay 表（游标状态持久化）。"""
+        if not settings.relays:
+            return
+        with SessionLocal() as s:
+            for name, url in settings.relays.items():
+                row = s.scalar(select(Relay).where(Relay.name == name))
+                if row is None:
+                    s.add(Relay(name=name, url=url))
+                else:
+                    row.url = url
+            s.commit()
+
+    def _relay_push_config() -> tuple[dict | None, dict | None]:
+        """要下发给各中转节点的配置：主服务器全局设置 + 位置选项。"""
+        with SessionLocal() as s:
+            glob = s.scalar(select(Setting).where(Setting.scope == "global"))
+            locations = config_push.location_options(s)
+            return (dict(glob.data) if glob else None), (locations or None)
+
+    def _upsert_relay_agent(s: Session, name: str, d: dict) -> None:
+        agent = s.scalar(select(Agent).where(Agent.code == d["code"]))
+        if agent is None:
+            agent = Agent(code=d["code"], hostname=d["hostname"], version=d["version"],
+                          status=Status.OK, last_payload={}, recent_logs=[],
+                          token_hash=None, via="relay", relay=name)
+            s.add(agent)
+        agent.hostname, agent.version = d["hostname"], d["version"]
+        agent.via, agent.relay = "relay", name
+        agent.status = d["status"]
+        agent.last_heartbeat = datetime.fromisoformat(d["last_heartbeat"])
+        agent.recent_logs = d["recent_logs"]
+        agent.last_payload = {
+            "recording": d["recording"], "profile": d["profile"], "current_segment": d["current_segment"],
+            "checks": d["checks"], "problems": d["problems"], "restarts": d["restarts"],
+            "pending_sync": d["pending_sync"], "disk_used": d["disk_used"],
+            "camera_resolutions": d["camera_resolutions"],
+        }
+
+    def _upsert_relay_recording(s: Session, name: str, rec: dict) -> None:
+        # 主服务器只存索引，文件留在中转节点；用 (relay_id, relay_rec_id) 去重
+        exists = s.scalar(select(Recording.id).where(
+            Recording.relay_id == name, Recording.relay_rec_id == rec["id"]))
+        if exists is not None:
+            return
+        s.add(Recording(
+            code=rec["code"], path=rec["path"], source_filename=rec["source_filename"],
+            start_at=datetime.fromisoformat(rec["start_at"]),
+            end_at=datetime.fromisoformat(rec["end_at"]),
+            size=rec["size"], sha256=rec["sha256"], integrity=rec["integrity"],
+            status="synced", locked=False, relay_id=name, relay_rec_id=rec["id"],
+        ))
+
+    def _relay_failed(name: str, reason: str) -> None:
+        now = datetime.now(UTC)
+        with SessionLocal() as s:
+            row = s.scalar(select(Relay).where(Relay.name == name))
+            if row is None:
+                return
+            row.failures += 1
+            # 连续 3 次拉不到：只出一条中转节点失联告警，不逐台报失联（tasks.md WP10）
+            if row.failures == 3 and row.status != "lost":
+                row.status = "lost"
+                s.add(Event(type="relay.lost", severity="critical", code=None,
+                            summary=f"子公司中转节点 {name} 失联，连续 3 次拉取失败",
+                            occurred_at=now, payload={"reason": reason}))
+                log.warning("中转节点 %s 失联：%s", name, reason)
+            s.commit()
+
+    def _relay_store(name: str, body: dict) -> None:
+        now = datetime.now(UTC)
+        with SessionLocal() as s:
+            row = s.scalar(select(Relay).where(Relay.name == name))
+            if row is None:
+                return
+            if row.status == "lost":
+                s.add(Event(type="relay.recovered", severity="info", code=None,
+                            summary=f"子公司中转节点 {name} 恢复连接", occurred_at=now, payload={}))
+                log.info("中转节点 %s 恢复连接", name)
+            row.failures = 0
+            row.status = "ok"
+            row.last_pull_at = now
+            row.since_event = body["last_event_id"]
+            row.since_recording = body["last_recording_id"]
+            for d in body["devices"]:
+                _upsert_relay_agent(s, name, d)
+            for e in body["events"]:
+                s.add(Event(type=e["type"], severity=e["severity"], code=e["code"],
+                            summary=e["summary"], payload=e["payload"],
+                            occurred_at=datetime.fromisoformat(e["occurred_at"])))
+            for rec in body["recordings"]:
+                _upsert_relay_recording(s, name, rec)
+            s.commit()
+
+    def _pull_one(name: str, url: str, push_settings: dict | None, push_locations: dict | None) -> None:
+        with SessionLocal() as s:
+            row = s.scalar(select(Relay).where(Relay.name == name))
+            since_event = row.since_event if row else 0
+            since_recording = row.since_recording if row else 0
+        payload = {"since_event": since_event, "since_recording": since_recording,
+                   "settings": push_settings, "location_options": push_locations}
+        try:
+            r = httpx.post(f"{url}/relay/v1/pull", json=payload,
+                           headers={"Authorization": f"Bearer {settings.relay_pull_token}"},
+                           timeout=15)
+            r.raise_for_status()
+            body = r.json()
+        except (httpx.HTTPError, ValueError) as e:
+            _relay_failed(name, str(e))
+            return
+        _relay_store(name, body)
+
+    def relay_pull_once() -> None:
+        if not settings.relays:
+            return
+        push_settings, push_locations = _relay_push_config()
+        for name, url in settings.relays.items():
+            _pull_one(name, url, push_settings, push_locations)
+
+    def relay_puller() -> None:
+        while not stop.wait(settings.relay_pull_seconds):
+            try:
+                relay_pull_once()
+            except Exception:
+                log.exception("拉取中转节点出错")
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        _ensure_relay_rows()
         threads = [
             threading.Thread(target=sweeper, daemon=True, name="lost-sweeper"),
             threading.Thread(target=retention_worker, daemon=True, name="retention"),
+            threading.Thread(target=relay_puller, daemon=True, name="relay-puller"),
         ]
         for t in threads:
             t.start()
@@ -227,6 +359,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.upload_manager = UploadManager(settings.recordings_dir, backfill_limit=settings.backfill_limit)
     app.state.sweep_once = sweep_once  # 测试用
     app.state.retention_once = retention_once  # 测试用
+    app.state.relay_pull_once = relay_pull_once  # 测试用
     app.include_router(uploads_router)
     _ensure_admin_hash()
 
@@ -402,6 +535,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return _serve_file(s, rec, "download", as_attachment=True)
 
     def _serve_file(s: Session, rec: Recording, action: str, as_attachment: bool = False) -> FileResponse:
+        if rec.relay_id:  # 文件在中转节点上：按需代理取并短期缓存（tasks.md WP10）
+            return _serve_relay_file(s, rec, action, as_attachment)
         path = Path(rec.path)
         # 防越权：只服务录像目录内的文件（上传接口已保证，这里再兜底一次）
         if not path.resolve().is_relative_to(settings.recordings_dir.resolve()) or not path.exists():
@@ -410,6 +545,45 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         s.commit()
         filename = rec.source_filename or path.name
         return FileResponse(path, media_type="video/mp4", filename=filename if as_attachment else None)
+
+    # ---------- 中转节点分段代理缓存（tasks.md WP10：短期缓存 + 总量封顶） ----------
+
+    def _relay_cache_dir() -> Path:
+        d = settings.recordings_dir / "_relay_cache"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _relay_cache_evict() -> None:
+        d = _relay_cache_dir()
+        files = sorted(d.glob("*.mp4"), key=lambda f: f.stat().st_mtime)  # 最久未用优先淘汰
+        cap = settings.relay_cache_max_mb * 1024 * 1024
+        total = sum(f.stat().st_size for f in files)
+        for f in files:
+            if total <= cap:
+                break
+            total -= f.stat().st_size
+            f.unlink(missing_ok=True)
+
+    def _serve_relay_file(s: Session, rec: Recording, action: str, as_attachment: bool) -> FileResponse:
+        relay_row = s.scalar(select(Relay).where(Relay.name == rec.relay_id))
+        if relay_row is None or rec.relay_rec_id is None:
+            raise HTTPException(status_code=404, detail="中转节点不存在")
+        cached = _relay_cache_dir() / f"{rec.relay_id}_{rec.relay_rec_id}.mp4"
+        if not cached.exists():
+            try:
+                r = httpx.get(
+                    f"{relay_row.url}/relay/v1/recordings/{rec.relay_rec_id}/file",
+                    headers={"Authorization": f"Bearer {settings.relay_pull_token}"}, timeout=60,
+                )
+                r.raise_for_status()
+            except httpx.HTTPError as e:
+                raise HTTPException(status_code=502, detail=f"取中转节点分段失败：{e}") from None
+            cached.write_bytes(r.content)
+            _relay_cache_evict()
+        log_operation(s, action, rec.id)
+        s.commit()
+        filename = rec.source_filename or cached.name
+        return FileResponse(cached, media_type="video/mp4", filename=filename if as_attachment else None)
 
     # ---------- 设置（设计文档 7、10 设置页；tasks.md WP4） ----------
 

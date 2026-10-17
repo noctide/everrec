@@ -29,6 +29,9 @@ class Agent(Base):
     last_payload: Mapped[dict] = mapped_column(JSON, default=dict)
     recent_logs: Mapped[list] = mapped_column(JSON, default=list)
     token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)  # 设备令牌哈希（WP5）
+    # 中转节点（tasks.md WP10）：local = 直连主服务器；relay = 经子公司中转节点
+    via: Mapped[str] = mapped_column(String(8), default="local")
+    relay: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)  # 归属中转节点名
 
 
 class Event(Base):
@@ -63,6 +66,24 @@ class Recording(Base):
     integrity: Mapped[str] = mapped_column(String(16))  # ok / repaired / partial
     status: Mapped[str] = mapped_column(String(16), default="synced")
     locked: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 中转节点（tasks.md WP10）：主服务器只存索引，文件在中转节点上，回放时按需代理取
+    relay_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)  # 归属中转节点名
+    relay_rec_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)  # 在中转节点上的 recording id
+
+
+class Relay(Base):
+    """中转节点游标状态（tasks.md WP10）：主服务器每 30 秒拉一次的增量游标与失联计数。"""
+
+    __tablename__ = "relay"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    url: Mapped[str] = mapped_column(String(256))
+    since_event: Mapped[int] = mapped_column(BigInteger, default=0)
+    since_recording: Mapped[int] = mapped_column(BigInteger, default=0)
+    failures: Mapped[int] = mapped_column(default=0)  # 连续拉不到的次数
+    status: Mapped[str] = mapped_column(String(16), default="ok")  # ok / lost
+    last_pull_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class OperationLog(Base):

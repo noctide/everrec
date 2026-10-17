@@ -75,7 +75,10 @@ def sweep_retention(
     ).all()
     deleted = 0
     for rec in expired:
-        if _delete_file(recordings_dir, rec.path):
+        if rec.relay_id:
+            # 文件在中转节点上，由那边按保留天数删；这里只清理主服务器的索引行
+            pass
+        elif _delete_file(recordings_dir, rec.path):
             log.info("滚动覆盖：删除过期分段 %s（%s）", rec.path, rec.start_at)
         else:
             log.info("滚动覆盖：删除过期分段记录 %s（文件已不存在）", rec.path)

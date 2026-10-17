@@ -7,6 +7,21 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+def _parse_relays() -> dict[str, str]:
+    """解析 EVERREC_RELAYS，形如 "sub1=http://relay1:8081,sub2=http://relay2:8081"。"""
+    raw = os.environ.get("EVERREC_RELAYS", "")
+    out: dict[str, str] = {}
+    for part in raw.split(","):
+        part = part.strip()
+        if not part or "=" not in part:
+            continue
+        name, url = part.split("=", 1)
+        name, url = name.strip(), url.strip()
+        if name and url:
+            out[name] = url
+    return out
+
+
 @dataclass(frozen=True)
 class Settings:
     # 正式部署用 PostgreSQL：postgresql+psycopg://everrec@/everrec
@@ -51,6 +66,17 @@ class Settings:
     )
     secret_key: str = field(
         default_factory=lambda: os.environ.get("EVERREC_SECRET_KEY", "")
+    )
+    # 中转节点（tasks.md WP10）：要拉取的中转节点、北向密钥、回放分段缓存上限
+    relays: dict[str, str] = field(default_factory=_parse_relays)  # 名字 -> 基址
+    relay_pull_token: str = field(
+        default_factory=lambda: os.environ.get("EVERREC_RELAY_PULL_TOKEN", "")
+    )
+    relay_pull_seconds: int = field(
+        default_factory=lambda: int(os.environ.get("EVERREC_RELAY_PULL_SECONDS", "30"))
+    )
+    relay_cache_max_mb: int = field(
+        default_factory=lambda: int(os.environ.get("EVERREC_RELAY_CACHE_MB", "2048"))
     )
     web_dist: Path | None = field(
         default_factory=lambda: Path(p) if (p := os.environ.get("EVERREC_WEB_DIST")) else None
