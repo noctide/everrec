@@ -78,6 +78,10 @@ class Settings:
     relay_cache_max_mb: int = field(
         default_factory=lambda: int(os.environ.get("EVERREC_RELAY_CACHE_MB", "2048"))
     )
+    # 自动更新（tasks.md WP9）：安装包存放目录、更新模式、更新时段
+    releases_dir: Path = field(
+        default_factory=lambda: Path(os.environ.get("EVERREC_RELEASES_DIR", "./releases"))
+    )
     web_dist: Path | None = field(
         default_factory=lambda: Path(p) if (p := os.environ.get("EVERREC_WEB_DIST")) else None
     )

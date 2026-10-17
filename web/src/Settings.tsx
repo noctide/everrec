@@ -1,13 +1,17 @@
 import { useEffect, useState } from "react";
 import {
   deleteDeviceSettings,
+  deleteRelease,
   fetchDevices,
   fetchQuality,
+  fetchReleases,
   fetchSettings,
   putDeviceSettings,
   putGlobalSettings,
   putLocationOptions,
+  uploadRelease,
   type QualityInfo,
+  type Release,
   type SettingsState,
 } from "./api";
 
@@ -147,6 +151,9 @@ export default function Settings() {
   const [rollover, setRollover] = useState(true);
   const [quota, setQuota] = useState(20);
   const [segment, setSegment] = useState(300);
+  const [updateMode, setUpdateMode] = useState("auto");
+  const [winStart, setWinStart] = useState(2);
+  const [winEnd, setWinEnd] = useState(4);
 
   // 位置选项编辑态
   const [locText, setLocText] = useState<Record<string, string>>({});
@@ -156,6 +163,13 @@ export default function Settings() {
   const [editDevice, setEditDevice] = useState<string | null>(null);
   const [newDevice, setNewDevice] = useState("");
   const [cameraMap, setCameraMap] = useState<Record<string, string[]>>({});
+
+  // 安装包版本管理（WP9）
+  const [releases, setReleases] = useState<Release[]>([]);
+  const [relVersion, setRelVersion] = useState("");
+  const [relNotes, setRelNotes] = useState("");
+  const [relFile, setRelFile] = useState<File | null>(null);
+  const [relBusy, setRelBusy] = useState(false);
 
   async function load() {
     try {
@@ -176,9 +190,13 @@ export default function Settings() {
       setRollover((g.rollover_enabled as boolean) ?? true);
       setQuota((g.local_quota_gb as number) ?? 20);
       setSegment((g.segment_seconds as number) ?? 300);
+      setUpdateMode((g.update_mode as string) ?? "auto");
+      setWinStart((g.update_window_start as number) ?? 2);
+      setWinEnd((g.update_window_end as number) ?? 4);
       setLocText(Object.fromEntries(
         Object.entries(s.location_options).map(([k, v]) => [k, v.join(", ")]),
       ));
+      fetchReleases().then(setReleases).catch(() => {}); // 版本列表加载失败不阻塞设置页
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -201,6 +219,9 @@ export default function Settings() {
         rollover_enabled: rollover,
         local_quota_gb: quota,
         segment_seconds: segment,
+        update_mode: updateMode,
+        update_window_start: winStart,
+        update_window_end: winEnd,
       });
       setSaved(true);
       await load();
@@ -243,6 +264,35 @@ export default function Settings() {
     }
     await putLocationOptions(data);
     await load();
+  }
+
+  async function doUploadRelease() {
+    if (!relFile || !relVersion.trim()) return;
+    setRelBusy(true);
+    setError(null);
+    try {
+      await uploadRelease(relFile, relVersion.trim(), relNotes.trim());
+      setRelFile(null);
+      setRelVersion("");
+      setRelNotes("");
+      const input = document.getElementById("rel-file") as HTMLInputElement | null;
+      if (input) input.value = "";
+      setReleases(await fetchReleases());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRelBusy(false);
+    }
+  }
+
+  async function doDeleteRelease(id: number) {
+    setError(null);
+    try {
+      await deleteRelease(id);
+      setReleases(await fetchReleases());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
   }
 
   const eff = qi ? resolveEncoding(quality, qi) : null;
@@ -297,6 +347,20 @@ export default function Settings() {
           <label>保留天数<input type="number" value={retentionDays} onChange={(e) => setRetentionDays(Number(e.target.value))} /></label>
           <label className="check"><input type="checkbox" checked={rollover} onChange={(e) => setRollover(e.target.checked)} /> 滚动覆盖（关闭后不再自动删除旧录像）</label>
         </div>
+        <div className="field-row">
+          <label>自动更新
+            <select value={updateMode} onChange={(e) => setUpdateMode(e.target.value)}>
+              <option value="auto">自动安装</option>
+              <option value="notify">只提醒，不自动装</option>
+            </select>
+          </label>
+          <label>更新时段（时）从
+            <input type="number" min={0} max={23} value={winStart} onChange={(e) => setWinStart(Number(e.target.value))} />
+          </label>
+          <label>到
+            <input type="number" min={0} max={23} value={winEnd} onChange={(e) => setWinEnd(Number(e.target.value))} />
+          </label>
+        </div>
       </section>
 
       <section className="card-block">
@@ -329,6 +393,33 @@ export default function Settings() {
         <div className="field-row">
           <input className="mono" placeholder="位置编号，如 HD-A-012" value={newDevice} onChange={(e) => setNewDevice(e.target.value)} />
           <button type="button" className="primary" onClick={addDevice}>添加</button>
+        </div>
+      </section>
+
+      <section className="card-block">
+        <h2>客户端下载与更新</h2>
+        <p className="muted">上传新版本安装包后，各电脑会在更新时段（默认夜间 02:00–04:00）自动检查并静默升级；也可在"录制与存储"下方把更新模式设为"只提醒"。</p>
+        <div className="field-row">
+          <input id="rel-file" type="file" accept=".exe" onChange={(e) => setRelFile(e.target.files?.[0] ?? null)} />
+        </div>
+        <div className="field-row">
+          <input className="mono" placeholder="版本号，如 0.2.0" value={relVersion} onChange={(e) => setRelVersion(e.target.value)} />
+          <input placeholder="更新说明（可选）" value={relNotes} onChange={(e) => setRelNotes(e.target.value)} />
+          <button type="button" className="primary" disabled={relBusy || !relFile || !relVersion.trim()} onClick={doUploadRelease}>
+            {relBusy ? "上传中…" : "上传版本"}
+          </button>
+        </div>
+        <div className="device-list">
+          {releases.map((r) => (
+            <div className="device-row" key={r.id}>
+              <span className="mono">{r.version}</span>
+              <span className="muted">{(r.size / 1024 / 1024).toFixed(1)} MB</span>
+              <span className="muted">{r.notes ?? ""}</span>
+              <span className="muted">{new Date(r.created_at).toLocaleString()}</span>
+              <button type="button" className="link" onClick={() => doDeleteRelease(r.id)}>删除</button>
+            </div>
+          ))}
+          {releases.length === 0 && <p className="muted">还没有上传任何版本。</p>}
         </div>
       </section>
 

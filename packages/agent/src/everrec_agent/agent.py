@@ -29,7 +29,7 @@ from everrec_core.health import Check, GrowthWatcher, storage_check
 from everrec_core.protocol import Checks, Heartbeat, HeartbeatReply
 from everrec_core.segments import archive_segment, enforce_quota, list_spool
 
-from . import __version__, child_guard
+from . import __version__, child_guard, updater
 from .index import IndexEntry, SegmentIndex
 from .logs import RecentProblems
 from .recorder import Recorder
@@ -38,6 +38,7 @@ from .uploader import Uploader
 log = logging.getLogger("agent")
 
 TICK_SECONDS = 2
+UPDATE_CHECK_SECONDS = 3600  # 每小时问一次服务器是否该更新；真正装不装由服务端按时段判定
 
 
 class Agent:
@@ -54,6 +55,8 @@ class Agent:
         self.offline_since: datetime | None = None
         self._last_hb = 0.0
         self._hb_thread: threading.Thread | None = None
+        self._last_update_check = 0.0
+        self._update_thread: threading.Thread | None = None
         self.stop_event = threading.Event()
         self._encoding_label = cfg.recording.encoding.label
         self._encoding_note: str | None = None
@@ -425,6 +428,28 @@ class Agent:
         self._hb_thread = threading.Thread(target=self.send_heartbeat, daemon=True)
         self._hb_thread.start()
 
+    def maybe_update(self) -> None:
+        """后台检查更新（WP9）。装不装由服务端按时段判定；这里只拉起后台线程，不阻塞录制。"""
+        if not self.cfg.server or not self.agent_token:
+            return  # 没配服务器或还没拿到设备令牌，跳过
+        if time.monotonic() - self._last_update_check < UPDATE_CHECK_SECONDS:
+            return
+        if self._update_thread and self._update_thread.is_alive():
+            return  # 上一次还没结束，不叠加
+        self._last_update_check = time.monotonic()
+        self._update_thread = threading.Thread(target=self._run_update, daemon=True)
+        self._update_thread.start()
+
+    def _run_update(self) -> None:
+        try:
+            action = updater.run_update(self.cfg.server, self.cfg.code, self.agent_token, __version__)
+            if action == "installed":
+                log.info("已安装新版本，安装器将接管并重启服务")
+            elif action == "notify":
+                log.info("发现新版本，等待自动更新时段")
+        except Exception:  # 更新绝不能影响录制
+            log.exception("更新检查异常（继续录制）")
+
     # ---------- 运行 ----------
 
     def tick(self) -> None:
@@ -437,6 +462,7 @@ class Agent:
         self.enforce_local_quota()
         self.write_status()  # 每轮写状态文件给桌面端（WP8）
         self.maybe_heartbeat()
+        self.maybe_update()  # 后台检查更新（WP9），不阻塞录制
 
     def run(self) -> None:
         log.info("EverRec Agent %s 启动，位置编号 %s，录像目录 %s，错峰偏移 %d 秒",

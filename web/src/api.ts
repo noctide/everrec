@@ -153,3 +153,36 @@ export async function deleteDeviceSettings(code: string): Promise<void> {
 export async function putLocationOptions(data: Record<string, string[]>): Promise<void> {
   await putJson("/api/v1/location-options", data);
 }
+
+// 安装包版本管理（tasks.md WP9）
+export interface Release {
+  id: number;
+  version: string;
+  filename: string;
+  size: number;
+  sha256: string;
+  notes: string | null;
+  created_at: string;
+}
+
+export async function fetchReleases(): Promise<Release[]> {
+  const r = await fetch("/api/v1/releases");
+  if (!r.ok) throw new Error(`服务器返回 ${r.status}`);
+  return r.json();
+}
+
+export async function uploadRelease(file: File, version: string, notes: string): Promise<void> {
+  const form = new FormData();
+  form.append("file", file);
+  const params = new URLSearchParams({ version, notes });
+  const r = await fetch(`/api/v1/releases?${params}`, { method: "POST", body: form });
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({}));
+    throw new Error(body.detail ?? `服务器返回 ${r.status}`);
+  }
+}
+
+export async function deleteRelease(id: number): Promise<void> {
+  const r = await fetch(`/api/v1/releases/${id}`, { method: "DELETE" });
+  if (!r.ok) throw new Error(`服务器返回 ${r.status}`);
+}

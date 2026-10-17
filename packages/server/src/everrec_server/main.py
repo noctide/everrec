@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import secrets
@@ -25,7 +26,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -33,6 +34,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from everrec_core.protocol import Heartbeat, HeartbeatReply
+from everrec_core.version import is_newer
 
 from . import __version__, auth, config_push
 from .db import (
@@ -43,6 +45,7 @@ from .db import (
     OperationLog,
     Recording,
     Relay,
+    Release,
     Setting,
     make_session_factory,
     utcnow,
@@ -680,6 +683,103 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         log_operation(s, "settings", None, detail="位置选项")
         s.commit()
         return {"ok": True}
+
+    # ---------- 安装包版本（tasks.md WP9） ----------
+
+    def _require_agent(s: Session, request: Request, code: str):
+        """校验 Agent 令牌（version-check / update-package 用）。"""
+        agent = s.scalar(select(Agent).where(Agent.code == code))
+        if agent is None or not auth.verify_agent_token(
+            request.headers.get("X-Agent-Token", ""), agent.token_hash
+        ):
+            raise HTTPException(status_code=401, detail="设备凭据无效")
+        return agent
+
+    @app.post("/api/v1/releases")
+    async def upload_release(
+        file: UploadFile = File(...),
+        version: str = Query(..., min_length=1, max_length=32),
+        notes: str = Query("", max_length=1024),
+        s: Session = Depends(get_db),
+    ):
+        """管理员上传新版本安装包（tasks.md WP9）。同版本号拒绝重复。"""
+        if s.scalar(select(Release.id).where(Release.version == version)):
+            raise HTTPException(status_code=409, detail=f"版本 {version} 已存在")
+        settings.releases_dir.mkdir(parents=True, exist_ok=True)
+        # 版本号进文件名，避免覆盖不同版本
+        safe_name = f"EverRecSetup-{version}.exe"
+        dest = settings.releases_dir / safe_name
+        h = hashlib.sha256()
+        size = 0
+        with dest.open("wb") as f:
+            while chunk := await file.read(1024 * 1024):
+                f.write(chunk)
+                h.update(chunk)
+                size += len(chunk)
+        s.add(Release(version=version, filename=safe_name, path=str(dest),
+                      size=size, sha256=h.hexdigest(), notes=notes or None))
+        log_operation(s, "settings", None, detail=f"上传版本 {version}（{size} 字节）")
+        s.commit()
+        return {"ok": True, "version": version, "size": size, "sha256": h.hexdigest()}
+
+    @app.get("/api/v1/releases")
+    def list_releases(s: Session = Depends(get_db)):
+        """列出全部版本，最新在前（网站"客户端下载与更新"页用）。"""
+        rows = s.scalars(select(Release).order_by(Release.created_at.desc())).all()
+        return [
+            {"id": r.id, "version": r.version, "filename": r.filename, "size": r.size,
+             "sha256": r.sha256, "notes": r.notes, "created_at": r.created_at}
+            for r in rows
+        ]
+
+    @app.delete("/api/v1/releases/{rid}")
+    def delete_release(rid: int, s: Session = Depends(get_db)):
+        row = s.get(Release, rid)
+        if row is None:
+            raise HTTPException(status_code=404, detail="版本不存在")
+        Path(row.path).unlink(missing_ok=True)
+        s.delete(row)
+        log_operation(s, "settings", None, detail=f"删除版本 {row.version}")
+        s.commit()
+        return {"ok": True}
+
+    @app.get("/agent/v1/version-check")
+    def agent_version_check(code: str, version: str, request: Request, s: Session = Depends(get_db)):
+        """Agent 检查更新。服务端判断是否该更新（最新版本 + auto 模式 + 在时段内）。"""
+        _require_agent(s, request, code)
+        latest = s.scalars(select(Release).order_by(Release.created_at.desc())).first()
+        if latest is None:
+            return {"latest_version": None, "update_available": False, "should_update": False}
+        update_available = is_newer(latest.version, version)
+        cfg = config_push.effective_settings(s, code)
+        mode = cfg.get("update_mode", "auto")
+        start = int(cfg.get("update_window_start", 2))
+        end = int(cfg.get("update_window_end", 4))
+        hour = datetime.now(UTC).hour
+        in_window = (start <= hour < end) if start <= end else (hour >= start or hour < end)
+        should_update = update_available and mode == "auto" and in_window
+        return {
+            "latest_version": latest.version,
+            "update_available": update_available,
+            "should_update": should_update,
+            "update_mode": mode,
+            "sha256": latest.sha256,
+            "size": latest.size,
+            "download_url": f"/agent/v1/update-package?code={code}",
+            "notes": latest.notes,
+        }
+
+    @app.get("/agent/v1/update-package")
+    def agent_update_package(code: str, request: Request, s: Session = Depends(get_db)):
+        """Agent 下载最新安装包。返回文件流。"""
+        _require_agent(s, request, code)
+        latest = s.scalars(select(Release).order_by(Release.created_at.desc())).first()
+        if latest is None:
+            raise HTTPException(status_code=404, detail="没有可下载的版本")
+        path = Path(latest.path)
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="安装包文件缺失")
+        return FileResponse(path, filename=latest.filename, media_type="application/octet-stream")
 
     if settings.web_dist and settings.web_dist.exists():
         app.mount("/", StaticFiles(directory=settings.web_dist, html=True), name="web")

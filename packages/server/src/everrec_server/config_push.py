@@ -20,9 +20,10 @@ _ALLOWED_KEYS = {
     "segment_seconds", "local_quota_gb",
     "upload_realtime_bps", "upload_backfill_bps",
     "retention_days", "rollover_enabled",
+    "update_mode", "update_window_start", "update_window_end",
 }
 
-# 随心跳下发给 Agent 的键；其余（保留天数、滚动覆盖、补传名额）是服务端自己用的
+# 随心跳下发给 Agent 的键；其余（保留天数、滚动覆盖、补传名额、更新策略）是服务端自己用的
 AGENT_KEYS = {
     "quality", "resolution", "fps", "watermark",
     "segment_seconds", "local_quota_gb",
@@ -71,6 +72,15 @@ def _validate_one(key: str, value):
         v = float(value)
         if v <= 0:
             raise ValueError("local_quota_gb 必须大于 0")
+        return v
+    if key == "update_mode":
+        if value not in ("auto", "notify"):
+            raise ValueError("update_mode 只能是 auto 或 notify")
+        return value
+    if key in ("update_window_start", "update_window_end"):
+        v = int(value)
+        if not 0 <= v <= 23:
+            raise ValueError(f"{key} 必须是 0 到 23 的小时数")
         return v
     raise ValueError(f"不支持的设置项：{key}")
 

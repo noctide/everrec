@@ -130,6 +130,21 @@ class Meta(Base):
     value: Mapped[str] = mapped_column(String(256))
 
 
+class Release(Base):
+    """安装包版本（tasks.md WP9）：管理员在网站上传，Agent 检查更新时下载。"""
+
+    __tablename__ = "release"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    version: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    filename: Mapped[str] = mapped_column(String(256))  # 安装包文件名
+    path: Mapped[str] = mapped_column(String(512))  # 服务器上的存放路径
+    size: Mapped[int] = mapped_column(BigInteger)
+    sha256: Mapped[str] = mapped_column(String(64))
+    notes: Mapped[str | None] = mapped_column(String(1024), nullable=True)  # 更新说明
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 def make_session_factory(url: str) -> sessionmaker:
     kwargs = {"connect_args": {"check_same_thread": False}} if url.startswith("sqlite") else {}
     engine = create_engine(url, **kwargs)
