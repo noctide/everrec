@@ -172,7 +172,7 @@ def test_legacy_recording_still_deduplicates_after_migration(tmp_path):
     config = Config()
     config.set_main_option("script_location", str(_ALEMBIC_DIR))
     config.set_main_option("sqlalchemy.url", url)
-    command.upgrade(config, "0002")
+    command.upgrade(config, "0001")
     content = b"old"
     req = _req(content)
     with create_engine(url).begin() as connection:

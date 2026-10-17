@@ -4,7 +4,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "0003"
-down_revision = "0002"
+down_revision = "0001"  # 本分支无 WP6 的 0002(delivery)；合并时需改回 0002
 branch_labels = None
 depends_on = None
 
