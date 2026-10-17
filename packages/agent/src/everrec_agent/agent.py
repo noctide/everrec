@@ -23,7 +23,7 @@ from pathlib import Path
 import httpx
 
 from everrec_core import repair
-from everrec_core.config import AgentConfig
+from everrec_core.config import AgentConfig, load_config
 from everrec_core.ffmpeg import camera_device, effective_encoding, list_camera_modes, spool_dir
 from everrec_core.health import Check, GrowthWatcher, storage_check
 from everrec_core.protocol import Checks, Heartbeat, HeartbeatReply
@@ -65,6 +65,11 @@ class Agent:
         self._config_version = 0
         self._server_settings: dict | None = None  # 待应用的下发配置
         self._load_cached_server_config()
+        # 本地配置文件改动检测（WP8）：桌面端改设置后，下一分段边界重载
+        self._config_mtime = (
+            cfg.config_path.stat().st_mtime if cfg.config_path and cfg.config_path.exists() else 0.0
+        )
+        self._config_dirty = False
 
     # ---------- 启动 ----------
 
@@ -179,11 +184,90 @@ class Agent:
             )
         self._probe_camera()  # 刷新画质标签与"摄像头达不到该分辨率"的提示
 
-    def _apply_server_settings(self, settings: dict) -> None:
-        """应用下发配置并重启录制（只在分段边界调用）。"""
-        self._apply_to_cfg(settings)
-        log.info("应用服务器下发配置：%s", settings)
-        self.recorder.restart("服务器下发了新配置")
+    def write_status(self) -> None:
+        """每轮把状态原子写入 state/status.json，供桌面端托盘/客户端只读显示（WP8）。
+
+        内容 = 心跳字段 + online；不含日志（界面从日志目录读）。
+        """
+        hb = Heartbeat(
+            code=self.cfg.code,
+            hostname=platform.node(),
+            agent_version=__version__,
+            sent_at=datetime.now().astimezone(),
+            recording=self.recording,
+            starting=self.starting,
+            profile=self._encoding_label,
+            camera_resolutions=self._camera_resolutions,
+            current_segment=self.watcher.current_segment,
+            checks=self.checks,
+            problems=self.problems,
+            restarts=self.recorder.restarts,
+            pending_sync=self.index.pending_count(),
+            disk_used=round(self.disk_used, 3),
+            offline_since=self.offline_since,
+        )
+        data = hb.model_dump(mode="json")
+        data["online"] = bool(self.online)
+        path = self.cfg.state_dir / "status.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(path)  # 原子替换，避免界面读到写一半的文件
+
+    def _check_config_change(self) -> None:
+        """配置文件被改动就标记，等下一个分段边界再应用（设计 4.6、WP8）。"""
+        p = self.cfg.config_path
+        if not p or not p.exists():
+            return
+        mtime = p.stat().st_mtime
+        if mtime != self._config_mtime:
+            self._config_mtime = mtime
+            self._config_dirty = True
+
+    def _reload_local_config(self) -> bool:
+        """重载本地配置文件。录像目录是本地设置不热切换；服务器地址变化时切换上传目标（WP8）。"""
+        try:
+            new_cfg = load_config(self.cfg.config_path)
+        except Exception as e:
+            log.warning("重载配置失败，沿用旧配置：%s", e)
+            return False
+        old_server = self.cfg.server
+        folder = self.cfg.recording.folder  # 录像目录是本地设置，不跟着配置热切换
+        self.cfg.recording = new_cfg.recording
+        self.cfg.recording.folder = folder
+        self.cfg.camera = new_cfg.camera
+        self.cfg.server = new_cfg.server
+        self.cfg.location = new_cfg.location
+        self.cfg.config_warnings = new_cfg.config_warnings
+        if self.cfg.server != old_server:
+            self.online = None
+            self.offline_since = datetime.now().astimezone() if self.cfg.server else None
+            self._last_hb = 0.0  # 立刻重新向新服务器心跳
+            if self.uploader:
+                self.uploader.set_server(self.cfg.server)
+            elif self.cfg.server:
+                self.uploader = Uploader(self.cfg, self.index)
+                self.uploader.start()
+        self._encoding_label = self.cfg.recording.encoding.label
+        for w in self.cfg.config_warnings:
+            log.warning("配置文件有误：%s", w)
+        self._probe_camera()
+        log.info("已重载本地配置文件")
+        return True
+
+    def _apply_pending_config(self) -> None:
+        """分段边界应用新配置：先重载本地配置文件，再叠服务端下发（画质类以服务端为准），最后重启一次录制。"""
+        applied = False
+        if self._config_dirty:
+            self._config_dirty = False
+            applied = self._reload_local_config() or applied
+        if self._server_settings is not None:
+            self._apply_to_cfg(self._server_settings)  # 服务端设置叠在本地之上，画质类以服务端为准
+            log.info("应用服务器下发配置：%s", self._server_settings)
+            self._server_settings = None
+            applied = True
+        if applied:
+            self.recorder.restart("配置已更新，按新档位录制")
 
     # ---------- 每一轮 ----------
 
@@ -344,13 +428,14 @@ class Agent:
     # ---------- 运行 ----------
 
     def tick(self) -> None:
+        self._check_config_change()  # 检测本地配置文件改动（WP8）
         self.run_checks()
         archived = self.archive_finished()
-        # 服务器下发的新配置：在下一个分段边界生效（设计文档 4.6、tasks.md WP4）
-        if self._server_settings is not None and archived > 0:
-            self._apply_server_settings(self._server_settings)
-            self._server_settings = None
+        # 分段边界：应用本地配置文件改动 + 服务端下发配置（WP8 + WP4；画质类以服务端为准）
+        if archived > 0 and (self._config_dirty or self._server_settings is not None):
+            self._apply_pending_config()
         self.enforce_local_quota()
+        self.write_status()  # 每轮写状态文件给桌面端（WP8）
         self.maybe_heartbeat()
 
     def run(self) -> None:

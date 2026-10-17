@@ -58,11 +58,15 @@ def test_tick_applies_pending_config_at_segment_boundary(cfg, monkeypatch):
     monkeypatch.setattr(agent, "run_checks", lambda: None)
     monkeypatch.setattr(agent, "enforce_local_quota", lambda: None)
     monkeypatch.setattr(agent, "maybe_heartbeat", lambda: None)
-    monkeypatch.setattr(agent, "_apply_server_settings", lambda s: applied.append(s))
+    monkeypatch.setattr(agent, "write_status", lambda: None)
+    monkeypatch.setattr(agent, "_reload_local_config", lambda: False)
+    monkeypatch.setattr(agent, "_apply_to_cfg", lambda s: applied.append(s))
+    monkeypatch.setattr(agent.recorder, "restart", lambda r: None)
 
     monkeypatch.setattr(agent, "archive_finished", lambda: 0)
     agent.tick()
     assert applied == [], "没到分段边界不应用"
+    assert agent._server_settings is not None
 
     monkeypatch.setattr(agent, "archive_finished", lambda: 1)
     agent.tick()
