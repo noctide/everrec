@@ -206,15 +206,14 @@ Leo 已定：录屏与摄像头**二选一**，同一个数据模型里把 `sour
   码率系数 0.10（`profiles.SCREEN_*`）；`recording.source` 列（0011 迁移）+ `UploadRequest.source`
   （默认 `camera`，旧版 Agent 兼容），服务端落库并随接口返回。
 - 会话进程 `everrec-screen`（`agent/screen.py`）：跑在登录用户会话里，锁屏停 FFmpeg、解锁恢复，
-  写 `state/screen.json`；独立单实例锁（`EverRecScreen`），多用户同时登录时只让第一个会话录；
-  配置里不是录屏时直接退出，所以启动项可以一直挂着。打包入口 `packaging/windows/entry/screen.py`，
-  安装包写进 HKLM Run（所有用户登录启动）。
+  写 `state/screen.json`；独立单实例锁（`EverRecScreen`），多用户同时登录时只让第一个会话录。
+  常驻不退出：配置里切成摄像头就待着不动，切回录屏不用重新登录（每轮重读配置）。
+  打包入口 `packaging/windows/entry/screen.py`，安装包写进 HKLM Run（所有用户登录启动）。
 - Agent 屏幕模式：不启动自己的 FFmpeg，改为读 `state/screen.json` 监督会话进程；锁屏时数据流检查不判失败、
   不去重启，心跳带 `paused="锁屏暂停"`；服务端在这种情况下判 `ok` 且不推送事件；设备墙/抽屉显示"锁屏暂停"。
+- 客户端设置："连接与录像"卡片里加"录制画面"（摄像头 / 屏幕），写 `camera.type`；界面注明锁屏期间没画面。
 
 **还没做的**：
-- 客户端设置里能选"录摄像头 / 录屏幕"（本地设置，服务器不下发）。眼下用
-  `everrec-agent set-config camera.type=screen` 或直接改配置文件切过去。
 - **验收**：Linux 上用 `testsrc` 走同一代码路径；Windows 上要 Leo 逐条验证（锁屏、切换用户、改分辨率、多显示器、
   杀进程后自动重启），PR 里写清"需要 Leo 在 Windows 上验证"，不得声称已验证。
 

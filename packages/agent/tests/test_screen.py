@@ -1,11 +1,12 @@
 """录屏模式（tasks.md WP12）：状态文件、锁屏暂停、Agent 不自己起 FFmpeg。"""
+
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from everrec_agent.agent import Agent
 from everrec_agent.screen import ScreenMonitor, ScreenSession, is_locked, read_state, write_state
-from everrec_core.config import AgentConfig, Camera, CameraType, Location, Recording
+from everrec_core.config import AgentConfig, Camera, CameraType, Location, Recording, load_config
 from everrec_core.health import Check
 
 
@@ -71,6 +72,21 @@ def test_is_locked_returns_bool():
     assert isinstance(got, bool)
     if sys.platform != "win32":
         assert got is False
+
+
+def test_session_follows_config_switch(tmp_path: Path):
+    """配置从摄像头切到录屏（或反过来）不用重新登录：会话进程自己重读配置。"""
+    config_path = tmp_path / "config" / "everrec.yaml"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text("camera: {type: usb}\n", encoding="utf-8")
+    cfg = load_config(config_path)
+    cfg.install_dir = tmp_path
+    session = ScreenSession(cfg, config_path)
+    assert session.wanted is False
+
+    config_path.write_text("camera: {type: screen}\n", encoding="utf-8")
+    session.reload_config()
+    assert session.wanted is True
 
 
 def test_session_apply_starts_and_stops(tmp_path: Path, monkeypatch):

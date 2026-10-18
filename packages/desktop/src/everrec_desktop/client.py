@@ -508,6 +508,9 @@ class ClientWindow(QWidget):
         grid.setColumnStretch(1, 1)
         self.server_edit = QLineEdit()
         self.server_edit.setPlaceholderText("留空 = 不连服务器，本机独立录像")
+        self.source_box = QComboBox()
+        self.source_box.addItem("摄像头", "usb")
+        self.source_box.addItem("屏幕（录桌面）", "screen")
         self.quality_box = QComboBox()
         for qrow in quality_table():
             star = "（推荐）" if qrow["recommended"] else ""
@@ -519,7 +522,8 @@ class ClientWindow(QWidget):
         self.screenshot_interval_box = QComboBox()
         for sec in SCREENSHOT_INTERVAL_STOPS:
             self.screenshot_interval_box.addItem(f"{sec // 60} 分钟", sec)
-        for r, (label, w) in enumerate((("服务器地址", self.server_edit), ("画质", self.quality_box),
+        for r, (label, w) in enumerate((("服务器地址", self.server_edit), ("录制画面", self.source_box),
+                                        ("画质", self.quality_box),
                                         ("录像文件夹", self.folder_edit),
                                         ("开机自动启动", self.autostart_box),
                                         ("定时截屏", self.screenshot_box),
@@ -528,7 +532,13 @@ class ClientWindow(QWidget):
             grid.addWidget(w, r, 1)
             grid.setRowMinimumHeight(r, 40)  # 输入框和开关行一样高，上下节奏才齐
         self.managed_note = theme.label("", "small", wrap=True)
-        grid.addWidget(self.managed_note, 6, 0, 1, 2)
+        grid.addWidget(self.managed_note, 7, 0, 1, 2)
+        self.source_note = theme.label(
+            "录屏抓的是登录用户的桌面：锁屏期间没画面（报「锁屏暂停」，不算异常）；"
+            "和摄像头二选一，切换到录屏后录屏进程会自动接手",
+            "small", wrap=True,
+        )
+        grid.addWidget(self.source_note, 8, 0, 1, 2)
         lay.addWidget(conn)
 
         # 配置文件
@@ -595,6 +605,9 @@ class ClientWindow(QWidget):
             field.set_value(getattr(cfg.location, key, "") if cfg else "")
         self._update_code_preview()
         self.server_edit.setText(cfg.server if cfg else "")
+        source = cfg.camera.type.value if cfg else "usb"
+        # 开发自测用的 test 画面在界面上按"摄像头"显示（现场用不到这个值）
+        self.source_box.setCurrentIndex(max(self.source_box.findData(source), 0))
         quality = cfg.recording.quality.value if cfg else "standard"
         # 有服务器就以服务器下发的为准（画质等由服务器统一管理），没有才在本机改
         managed = self._server_quality() if (cfg and cfg.server) else None
@@ -629,6 +642,7 @@ class ClientWindow(QWidget):
             return
         values = {k: f.value() for k, f in self.loc_edits.items()}
         values.update(server=self.server_edit.text(), folder=self.folder_edit.text(),
+                      camera_type=self.source_box.currentData(),
                       autostart=self.autostart_box.isChecked(),
                       screenshot_enabled=self.screenshot_box.isChecked(),
                       screenshot_interval_seconds=self.screenshot_interval_box.currentData())
