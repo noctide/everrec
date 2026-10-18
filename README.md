@@ -2,7 +2,7 @@
 
 面向设备操作区的轻量录像系统：每台操作区电脑 24 小时连续录制，能连上服务器就集中管理，连不上就在本地独立运行；管理网站统一查看每个摄像头是否在正常录制。
 
-**状态：可运行的骨架（v0.1）。** 已打通“录制 → 健康检查 → 心跳 → 失联判定 → 设备墙”这条主线；上传、回放、设置页、桌面端窗口尚未实现，见下方[骨架进度](#骨架进度)。
+**状态：第一版功能开发完成（WP1–WP10），尚未经 Windows 现场验收。** 录制、上传补传、保留与滚动覆盖、回放、设置与配置下发、登录与凭据、事件推送、缩略图、桌面端、打包与自动更新、中转节点均已实现并通过自动化测试；Windows 实机验证与试点验收（WP11）待做，见下方[进度](#进度)。
 
 ## 核心特点
 
@@ -49,7 +49,7 @@ packages/
   core/      everrec-core    公共核心库：配置、FFmpeg 录制命令、分段归档、健康检查、1/2 级修复、心跳格式
   agent/     everrec-agent   采集端：录制、断线照常录、启动时修复中断分段、本地滚动覆盖、心跳
   server/    everrec-server  服务端：心跳接口、失联判定、事件表、GET /api/v1/devices
-web/                         管理网站（React + TypeScript + Vite），目前只有设备墙
+web/                         管理网站（React + TypeScript + Vite）：设备墙、录像回放、设置、登录
 config/everrec.example.yaml  客户端配置示例
 deploy/                      WinSW 服务定义（Windows Agent）、systemd 单元（Linux 服务端）
 docs/                        设计文档与架构图
@@ -75,17 +75,36 @@ uv run everrec-agent run -c ./demo/config/everrec.yaml
 
 开发管理网站时用 `cd web && npm run dev`，`/api` 会自动转发到 8080。
 
-## 骨架进度
+## 打包与安装（Windows）
 
-| 部分 | 已有 | 下一步 |
-| --- | --- | --- |
-| 录制 | FFmpeg 分段录 MPEG-TS、错峰切段、档位、水印、进程崩溃退避重启、单实例 | 在真实 USB 摄像头和 Windows 上验证；分段转 MP4 供网页播放 |
-| 健康检查 | ①③④⑥，④ 判“文件是否在长”，30 秒不长自动重启；② 从 FFmpeg 报错识别 | 缩略图 |
-| 离线自治 | 连不上服务器照常录，记录离线时段，恢复后设备墙显示黄色 | 上传与补传（错峰、限速、名额、断点续传） |
-| 修复 | 1 级重新封装、2 级截断恢复；启动时自动处理中断分段，原文件进隔离目录 | 桌面修复工具窗口 |
-| 服务端 | 心跳、失联判定（大批失联合并）、状态变化写事件表、设备列表接口 | 录像接收与索引、推送投递、管理员密码、Agent 凭据、中转节点 |
-| 管理网站 | 设备墙：状态筛选、编号前缀筛选、异常提示条、设备日志 | 录像回放、设置 |
-| 桌面端 | — | 客户端窗口、托盘（PySide6） |
+用 PyInstaller 打 4 个程序（Agent、客户端、托盘、修复工具），Inno Setup 打安装包，GitHub Actions（`windows-latest`）自动产出。本地在 Windows 上打包：
+
+```powershell
+# 装打包工具
+uv pip install pyinstaller
+# 下 FFmpeg（含 libx264）到 third_party\ffmpeg\，下 WinSW 到 packaging\windows\winsw\
+# 打包 4 个程序 + 放 FFmpeg 到各自 bin\
+powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1 -FfmpegDir third_party\ffmpeg
+# 编译安装包（iscc 随 Inno Setup 6 安装）
+iscc packaging\windows\everrec.iss
+```
+
+安装包默认装 `D:\EverRec`，没有 D 盘退 `C:\EverRec` 并把本地配额调小；升级和卸载保留 `recordings`、`config`、`logs`。静默安装：`EverRecSetup-x.y.z.exe /VERYSILENT /SERVER=https://服务器 /LOCATION=012`。
+
+**许可注意**：安装包里的 FFmpeg 带 libx264，适用 GPL。公司内部使用没有问题；若以后对外分发，需按 GPL 处理或改用其他编码器（见设计文档第 12 节）。
+
+## 进度
+
+| 部分 | 状态 |
+| --- | --- |
+| 录制、健康检查、离线自治、修复 | 完成；Windows 摄像头画质取流待实测 |
+| 上传与补传、保留与滚动覆盖、回放 | 完成（自动化测试通过） |
+| 设置页与配置下发、登录与凭据 | 完成 |
+| 事件推送（通用 JSON + HMAC）、缩略图 | 完成 |
+| 桌面端（修复工具、托盘、客户端）、打包与自动更新 | 完成；需在 Windows 上验证 |
+| 子公司中转节点 | 完成 |
+| 试点与验收（WP11） | 待做，需真实电脑 24 小时、断网、断电等实测 |
+
 ## 规划的技术选型
 
 Python 3.12 + FFmpeg（采集端与修复）、FastAPI + PostgreSQL（服务端，Linux）、React + TypeScript（管理网站）、PySide6（桌面端）。详见设计文档第 12 节。

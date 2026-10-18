@@ -203,16 +203,22 @@ def _video_filter(cfg: AgentConfig, p: Encoding) -> str:
     return ",".join(chain)
 
 
-def build_record_command(cfg: AgentConfig) -> list[str]:
+def build_record_command(cfg: AgentConfig, thumb_fps: str = "1/60") -> list[str]:
     p, mode, _note = effective_encoding(cfg)
     seg = cfg.recording.segment_seconds
     gop = min(10, seg)  # 关键帧间隔（秒）
     out = spool_dir(cfg) / f"{cfg.code}_%Y%m%d_%H%M%S{SEGMENT_EXT}"
+    thumb = cfg.state_dir / "thumb.jpg"
+    # 一路录像、一路缩略图（设计 6.2）：摄像头只能读一次，用 split 分流。
+    # 录像那一路的参数保持不变；缩略图一路 fps 抽帧、缩到宽 320，持续覆盖同一文件。
+    rec = _video_filter(cfg, p)
+    fc = f"[0:v]split=2[rec][thumb];[rec]{rec}[recv];[thumb]fps={thumb_fps},scale=320:-2[thumbv]"
     return [
         ffmpeg_binary(),
         "-hide_banner", "-loglevel", "warning", "-y",
         *_input_args(cfg, p, mode),
-        "-vf", _video_filter(cfg, p),
+        "-filter_complex", fc,
+        "-map", "[recv]",
         "-an",
         "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
         "-crf", str(p.crf), "-maxrate", f"{p.maxrate_kbps}k", "-bufsize", f"{p.bufsize_kbps}k",
@@ -228,4 +234,25 @@ def build_record_command(cfg: AgentConfig) -> list[str]:
         "-reset_timestamps", "1",
         "-strftime", "1",
         str(out),
+        "-map", "[thumbv]",
+        "-c:v", "mjpeg",
+        "-q:v", "5",
+        "-f", "image2",
+        "-update", "1",
+        str(thumb),
     ]
+
+
+def remux_to_mp4(src: Path, dst: Path) -> bool:
+    """把 MPEG-TS 转封装成 MP4（不重新编码），加 faststart 让浏览器能边下边播。
+
+    浏览器不能直接播 TS，上传完成后服务端用这个转封装（设计文档 12、tasks.md WP3）。
+    失败返回 False，调用方保留原 TS 供修复。
+    """
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    r = subprocess.run(
+        [ffmpeg_binary(), "-hide_banner", "-nostdin", "-v", "error", "-y",
+         "-i", str(src), "-map", "0:v:0", "-c", "copy", "-movflags", "+faststart", str(dst)],
+        capture_output=True, text=True,
+    )
+    return r.returncode == 0 and dst.exists() and dst.stat().st_size > 0

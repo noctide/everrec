@@ -7,6 +7,8 @@ dependencies = [
     "everrec-core",
     "everrec-agent",
     "everrec-server",
+    "everrec-relay",
+    "everrec-desktop",
 ]
 
 [dependency-groups]
@@ -25,6 +27,8 @@ members = ["packages/*"]
 everrec-core = { workspace = true }
 everrec-agent = { workspace = true }
 everrec-server = { workspace = true }
+everrec-relay = { workspace = true }
+everrec-desktop = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["packages"]
@@ -39,4 +43,4 @@ select = ["E", "F", "I", "UP", "B"]
 ignore = ["B008"]  # FastAPI 的 Depends/Query 写在参数默认值里是惯用法
 
 [tool.ruff.lint.isort]
-known-first-party = ["everrec_core", "everrec_agent", "everrec_server"]
+known-first-party = ["everrec_core", "everrec_agent", "everrec_server", "everrec_relay", "everrec_desktop"]
