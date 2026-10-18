@@ -26,6 +26,18 @@ def test_chinese_scripts_have_utf8_bom():
         assert data.startswith(b"\xef\xbb\xbf"), f"{path.name} 少了 UTF-8 BOM，5.1 / Inno 会读成乱码"
 
 
+def test_installer_output_dir_matches_ci_artifact_path():
+    """CI 最后一步上传 `Output/*.exe`，安装包必须真的输出到仓库根的 Output\\。
+
+    Inno Setup 默认输出到脚本旁边的 `packaging\\windows\\Output\\`，和 CI 的路径对不上就会
+    "No files were found with the provided path"（第二次打 tag 时挂在这）。
+    """
+    iss = ISS.read_text(encoding="utf-8-sig")
+    assert "OutputDir=..\\..\\Output" in iss, "iss 没把安装包输出到仓库根的 Output\\"
+    workflow = (ROOT / ".github" / "workflows" / "windows-build.yml").read_text(encoding="utf-8")
+    assert "path: Output/*.exe" in workflow
+
+
 def test_service_xml_name_matches_service_exe():
     """WinSW 只读跟可执行文件同名的配置：everrec-agent-service.exe ↔ everrec-agent-service.xml。"""
     iss = ISS.read_text(encoding="utf-8-sig")
