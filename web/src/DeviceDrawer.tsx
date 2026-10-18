@@ -16,7 +16,7 @@ function ownerText(d: Device): string {
   return [d.owner.name, d.owner.dept].filter(Boolean).join(" · ") + (d.owner.inherited ? `（继承自 ${d.owner.from_name}）` : "");
 }
 
-/** 一台设备的详情抽屉：看板和设备墙共用，避免两处各写一份。 */
+/** 一台设备的详情抽屉：首页和设备墙共用，避免两处各写一份。 */
 export default function DeviceDrawer({
   device,
   onClose,

@@ -4,7 +4,7 @@ import DeviceWall from "./DeviceWall";
 import Playback from "./Playback";
 import Settings from "./Settings";
 
-// 管理网站：`#/` 看板（巡视图，一屏看全）、`#/wall` 设备墙（工作台）、`#/playback` 录像回放、`#/settings` 设置。
+// 管理网站：`#/` 首页（巡视图，一屏看全）、`#/wall` 设备墙（工作台）、`#/playback` 录像回放、`#/settings` 设置。
 type Page = "board" | "wall" | "playback" | "settings";
 function route(): Page {
   if (window.location.hash.startsWith("#/wall")) return "wall";
@@ -33,7 +33,7 @@ export default function App() {
           <span>EverRec 恒录</span>
         </div>
         <nav aria-label="主导航">
-          <a className={page === "board" ? "active" : ""} href="#/">看板</a>
+          <a className={page === "board" ? "active" : ""} href="#/">首页</a>
           <a className={page === "wall" ? "active" : ""} href="#/wall">设备墙</a>
           <a className={page === "playback" ? "active" : ""} href="#/playback">录像回放</a>
           <a className={page === "settings" ? "active" : ""} href="#/settings">设置</a>
