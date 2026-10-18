@@ -18,7 +18,14 @@ from functools import cache
 from pathlib import Path
 
 from .config import AgentConfig, CameraType
-from .profiles import RESOLUTION_SIZE, Encoding
+from .profiles import (
+    RESOLUTION_SIZE,
+    SCREEN_BITS_PER_PIXEL,
+    SCREEN_DEFAULT_FPS,
+    SCREEN_DEFAULT_RESOLUTION,
+    Encoding,
+    Resolution,
+)
 
 SPOOL_DIRNAME = "_spool"
 SEGMENT_EXT = ".ts"
@@ -147,9 +154,22 @@ def camera_device(cfg: AgentConfig) -> str:
     return cfg.camera.device or "/dev/video0"
 
 
+def recording_encoding(cfg: AgentConfig) -> Encoding:
+    """这次录制用的编码参数。
+
+    屏幕源有自己的默认挡（1080P / 8 帧）和码率系数（0.10）：摄像头那套"省空间 / 偏省"挡位
+    是按人脸和动作定的，套到桌面文字上会糊。高级里显式填了分辨率或帧率就按填的来。
+    """
+    if cfg.camera.type != CameraType.SCREEN:
+        return cfg.recording.encoding
+    r = cfg.recording
+    res = Resolution(r.resolution) if r.resolution else SCREEN_DEFAULT_RESOLUTION
+    return Encoding(res, r.fps or SCREEN_DEFAULT_FPS, SCREEN_BITS_PER_PIXEL)
+
+
 def effective_encoding(cfg: AgentConfig) -> tuple[Encoding, CameraMode | None, str | None]:
     """实际录制用的参数、取流格式，以及需要提醒的话（摄像头达不到设定分辨率时）。"""
-    enc = cfg.recording.encoding
+    enc = recording_encoding(cfg)
     modes = list_camera_modes(camera_device(cfg)) if cfg.camera.type == CameraType.USB else ()
     mode = choose_mode(modes, enc)
     if mode and mode.height < enc.height:
@@ -170,6 +190,11 @@ def _input_args(cfg: AgentConfig, enc: Encoding, mode: CameraMode | None) -> lis
     cam = cfg.camera
     if cam.type == CameraType.TEST:
         return ["-re", "-f", "lavfi", "-i", f"testsrc2=size={enc.width}x{enc.height}:rate={enc.fps}"]
+    if cam.type == CameraType.SCREEN:
+        # 抓整个主屏。这个进程必须跑在登录用户的会话里：Windows 服务在 Session 0，抓不到桌面
+        if sys.platform != "win32":
+            raise RuntimeError("录屏只在 Windows 上可用（gdigrab）")
+        return ["-f", "gdigrab", "-framerate", str(enc.fps), "-i", "desktop"]
     if cam.type == CameraType.USB:
         device = camera_device(cfg)
         if sys.platform == "win32":

@@ -103,6 +103,7 @@ class RecordingOut(BaseModel):
     integrity: str
     status: str
     locked: bool
+    source: str = "camera"  # camera / screen，第一版界面不按它筛
 
 
 def log_operation(
@@ -596,6 +597,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             RecordingOut(
                 id=r.id, code=r.code, start_at=aware(r.start_at), end_at=aware(r.end_at),
                 size=r.size, integrity=r.integrity, status=r.status, locked=r.locked,
+                source=r.source or "camera",
             )
             for r in s.scalars(q)
         ]

@@ -73,6 +73,7 @@ class Location(BaseModel):
 class CameraType(StrEnum):
     USB = "usb"
     TEST = "test"  # FFmpeg 内置测试画面，开发和自测用
+    SCREEN = "screen"  # Windows 桌面（与摄像头二选一，tasks.md WP12）
     # 第二期：RTSP = "rtsp"; ONVIF = "onvif"; NVR = "nvr"
 
 

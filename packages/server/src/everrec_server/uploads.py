@@ -258,6 +258,7 @@ def complete_upload(
         size=meta.size,
         sha256=meta.sha256,
         integrity=meta.integrity,
+        source=meta.source,
         status="synced",
         locked=False,
     )
