@@ -99,6 +99,10 @@ cd web && npm install && npm run build    # 必须通过 tsc 和 vite build
 | dshow 设备名 | 名称可能含逗号，如 `BisonCam,NB Pro` | 原样传 `video=<名称>`，不要按逗号切分 |
 | `core/ffmpeg.py` | dshow 不指定格式时摄像头按自己的默认格式出图（常见 640×480），设成 720P 也只是放大 | 先探测摄像头支持的格式（`list_camera_modes`），按 `choose_mode` 选宽高都够的最小格式并传 `-video_size`；摄像头达不到时降低录制分辨率并提示，不做放大 |
 | `core/config.py` | 配置文件写错一个值，程序启动即报错，录像停了 | `load_config` 容错：写错的项回到默认值，警告写日志并随心跳上报，设备墙可见 |
+| `server/uploads.py` | Agent 上报的是**本地时间**（带时区），SQLite 的 `DateTime` 会把时区丢掉：库里存的是本地墙钟，读回来却按 UTC 解释，回放时间轴和保留天数清理整体偏一个时区（实测偏 7 小时：视频水印 10:26、页面显示 03:26） | 落库前用 `_to_utc()` 统一成 UTC；归档目录仍按本地日期分层 |
+| `agent/net.py` | 系统代理环境变量写歪（实测 `NO_PROXY` 里裸写 `::1`、`[::1]`）时 httpx 解析代理抛 `InvalidURL`，Agent 启动即崩、录像都不开始 | Agent 的 HTTP 全走 `net.client()`（`trust_env=False`），只连内网服务器，不读代理设置 |
+| `agent/cli.py` | 英文代码页控制台（cp1252）里 `print` 中文抛 `UnicodeEncodeError`：`init` 配置已生成却报错退出 | `main()` 开头把 stdout/stderr 切成 UTF-8 + `errors="replace"` |
+| `agent/logs.py` | httpx 每个请求打一行 INFO，把现场日志和客户端"最近日志"刷满（实测 301 行里 244 行是它） | `setup_logging` 把 `httpx` / `httpcore` 降到 WARNING；服务端 `run()` 同样处理 |
 | 测试 | Windows 上摄像头和 FFmpeg 启动比 Linux 慢 | 测试里不写死"第几秒开始在录"，只断言"录上了且之后不掉线" |
 
 ## 9. Windows 相关改动的验证

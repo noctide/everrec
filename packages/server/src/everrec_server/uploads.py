@@ -38,6 +38,16 @@ from .retention import disk_usage_ratio
 
 log = logging.getLogger("everrec.server.uploads")
 
+
+def _to_utc(dt: datetime) -> datetime:
+    """把 Agent 上报的分段起止时间换成 UTC 再落库。
+
+    Agent 发的是本地时间（带时区）。SQLite 的 DateTime 会丢掉时区，不先统一成 UTC，库里存的就是
+    本地墙钟、读回来却按 UTC 解释，回放时间轴整体偏一个时区（实测偏 7 小时：视频水印 10:26，
+    页面显示 03:26；保留天数清理也会跟着偏）。旧版 Agent 可能不带时区，按服务器本地时间理解。
+    """
+    return (dt if dt.tzinfo else dt.astimezone()).astimezone(UTC)
+
 CHUNK_MAX = 1_048_576  # 分片 ≤ 1 MB，在接口里校验，不依赖 Nginx（设计文档 5.5 措施 6）
 
 INCOMING_DIRNAME = "_incoming"
@@ -227,7 +237,7 @@ def complete_upload(
     if path.stat().st_size != meta.size or _sha256(path) != meta.sha256:
         manager.discard(upload_id)
         return JSONResponse(status_code=422, content={"error": "大小或 SHA-256 不符，请重传"})
-    started = meta.started_at
+    started = meta.started_at  # 归档目录按 Agent 的本地日期分层，人翻起来直观；库里存 UTC
     dest = (
         manager.recordings_dir / meta.code
         / f"{started:%Y}" / f"{started:%m}" / f"{started:%d}" / meta.filename
@@ -253,8 +263,8 @@ def complete_upload(
         code=meta.code,
         path=str(final),
         source_filename=meta.filename,
-        start_at=meta.started_at,
-        end_at=meta.ended_at,
+        start_at=_to_utc(meta.started_at),
+        end_at=_to_utc(meta.ended_at),
         size=meta.size,
         sha256=meta.sha256,
         integrity=meta.integrity,

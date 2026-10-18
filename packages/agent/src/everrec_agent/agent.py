@@ -29,7 +29,7 @@ from everrec_core.health import Check, GrowthWatcher, storage_check
 from everrec_core.protocol import Checks, Heartbeat, HeartbeatReply
 from everrec_core.segments import archive_segment, enforce_quota, list_spool
 
-from . import __version__, child_guard, updater
+from . import __version__, child_guard, net, updater
 from .index import IndexEntry, SegmentIndex
 from .logs import RecentProblems
 from .recorder import Recorder
@@ -455,7 +455,7 @@ class Agent:
         if self.agent_token:
             headers["X-Agent-Token"] = self.agent_token
         try:
-            r = httpx.post(url, content=hb.model_dump_json(), timeout=5, headers=headers)
+            r = net.post(url, content=hb.model_dump_json(), timeout=5, headers=headers)
             r.raise_for_status()
             reply = HeartbeatReply.model_validate(r.json())
             if server != self.cfg.server:
@@ -528,9 +528,9 @@ class Agent:
         url = f"{self.cfg.server.rstrip('/')}/agent/v1/thumbnail?code={self.cfg.code}"
         try:
             with thumb.open("rb") as f:
-                httpx.put(url, content=f.read(), timeout=5,
-                          headers={"Content-Type": "image/jpeg",
-                                   "X-Agent-Token": self.agent_token or ""})
+                net.put(url, content=f.read(), timeout=5,
+                        headers={"Content-Type": "image/jpeg",
+                                 "X-Agent-Token": self.agent_token or ""})
         except httpx.HTTPError:
             pass  # 缩略图发不出去无所谓，下一分钟再试
 

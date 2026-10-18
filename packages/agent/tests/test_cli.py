@@ -1,15 +1,33 @@
-"""set-config 子命令：改配置写回、非法值回退默认。"""
+"""set-config 子命令：改配置写回、非法值回退默认；命令行输出中文不能崩。"""
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
+import sys
 
 import pytest
 
 from everrec_agent.agent import Agent
 from everrec_agent.cli import cmd_set_config
 from everrec_core.config import AgentConfig, Camera, CameraType, Location, Recording, load_config, save_config
+
+
+def test_init_works_on_non_utf8_console(tmp_path):
+    """英文代码页控制台（cp1252）下 `init` 也要正常退出。
+
+    实测：配置已经生成好了，最后 print 中文抛 UnicodeEncodeError、退出码 1，现场看着像失败。
+    """
+    env = dict(os.environ, PYTHONIOENCODING="cp1252")
+    r = subprocess.run(
+        [sys.executable, "-c", "from everrec_agent.cli import main; raise SystemExit(main())",
+         "init", str(tmp_path / "inst")],
+        capture_output=True, env=env,
+    )
+    assert r.returncode == 0, r.stderr.decode("utf-8", "replace")
+    assert (tmp_path / "inst" / "config" / "everrec.yaml").exists()
 
 
 def test_set_config_writes_and_reloads(tmp_path):
@@ -76,3 +94,4 @@ def test_config_change_updates_upload_target(tmp_path, monkeypatch, before, afte
     finally:
         if agent.uploader:
             agent.uploader.http.close()
+

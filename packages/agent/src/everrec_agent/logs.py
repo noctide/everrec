@@ -39,6 +39,11 @@ def setup_logging(logs_dir: Path, verbose: bool = False) -> RecentProblems:
     root = logging.getLogger()
     root.setLevel(logging.DEBUG if verbose else logging.INFO)
 
+    # httpx 每发一次请求都打一行 INFO，能把日志和客户端的"最近日志"刷满（实测 301 行里 244 行是它），
+    # 现场要的"分段已归档""上传完成"全被埋掉。只留它的警告。
+    for noisy in ("httpx", "httpcore"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+
     file_h = logging.handlers.TimedRotatingFileHandler(
         logs_dir / "agent.log", when="midnight", backupCount=30, encoding="utf-8"
     )

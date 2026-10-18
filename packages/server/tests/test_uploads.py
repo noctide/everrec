@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 
 from alembic import command
 from alembic.config import Config
@@ -95,6 +95,46 @@ def test_upload_keeps_source(tmp_path):
         assert c.post(f"/agent/v1/uploads/{uid}/complete").status_code == 200
     with Session(create_engine(url)) as s:
         assert s.scalar(select(Recording)).source == "screen"
+
+
+def test_upload_stores_start_time_as_utc(tmp_path):
+    """Agent 报的是本地时间，库里要存 UTC、接口读回来是同一时刻（tasks.md WP1）。
+
+    实测（Windows 演示，UTC-7）：视频水印 10:26，库里存了本地墙钟 10:26，读回来却按 UTC 解释，
+    回放页显示 03:26；回放时间轴和保留天数清理都会偏一个时区。
+    """
+    app, url, _settings = _app(tmp_path)
+    content = b"tz" * 1000
+    local = timezone(timedelta(hours=-7))
+    started = datetime(2026, 10, 8, 10, 26, 45, tzinfo=local)
+    req = UploadRequest(
+        code="HD-A-012",
+        filename="HD-A-012_102645.ts",
+        started_at=started,
+        ended_at=started + timedelta(seconds=30),
+        size=len(content),
+        sha256=hashlib.sha256(content).hexdigest(),
+        integrity="ok",
+        channel="realtime",
+    )
+    with TestClient(app) as c:
+        uid = c.post("/agent/v1/uploads", json=req.model_dump(mode="json"),
+                     headers={"X-Agent-Token": _register(c)}).json()["upload_id"]
+        assert c.put(f"/agent/v1/uploads/{uid}", params={"offset": 0},
+                     content=content).status_code == 200
+        assert c.post(f"/agent/v1/uploads/{uid}/complete").status_code == 200
+        rows = c.get("/api/v1/recordings", params={
+            "code": "HD-A-012",
+            "from": "2026-10-08T00:00:00+00:00",
+            "to": "2026-10-09T00:00:00+00:00",
+        }).json()
+        assert len(rows) == 1
+        assert datetime.fromisoformat(rows[0]["start_at"]) == started, "接口读回来必须是同一时刻"
+    with Session(create_engine(url)) as s:
+        rec = s.scalar(select(Recording))
+        # SQLite 里存的是不带时区的裸时间：必须是 UTC 的 17:26:45，不能是本地墙钟 10:26:45
+        assert rec.start_at == datetime(2026, 10, 8, 17, 26, 45)
+        assert rec.end_at == datetime(2026, 10, 8, 17, 27, 15)
 
 
 def test_offset_mismatch_returns_409_with_correct_received(tmp_path):
