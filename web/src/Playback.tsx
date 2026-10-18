@@ -5,6 +5,7 @@ import {
   setRecordingLock,
   type Recording,
 } from "./api";
+import { errMsg } from "./labels";
 
 const DAY_MS = 86_400_000;
 const GAP_TOLERANCE_MS = 10_000; // 分段元数据有约 1–3 秒落盘偏移，>10 秒才算真缺口
@@ -35,6 +36,13 @@ function fmtHM(d: Date): string {
 
 function fmtSpan(r: Recording): string {
   return `${fmtHM(new Date(r.start_at))} – ${fmtHM(new Date(r.end_at))}`;
+}
+
+// 分段时长不固定（默认 1 小时，也能在设置里改成 5 / 10 / 15 / 30 分钟），按数据算，不写死
+function segMinutes(rs: Recording[]): number | null {
+  if (rs.length === 0) return null;
+  const ms = new Date(rs[0].end_at).getTime() - new Date(rs[0].start_at).getTime();
+  return ms > 0 ? Math.round(ms / 60_000) : null;
 }
 
 function fmtSize(bytes: number): string {
@@ -114,7 +122,7 @@ export default function Playback() {
       setCurrent(rows.length > 0 ? rows[0] : null);
       setSearched(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errMsg(e));
     } finally {
       setLoading(false);
     }
@@ -143,7 +151,7 @@ export default function Playback() {
       setRecordings((rows) => rows.map((r) => (r.id === rec.id ? { ...r, locked: !r.locked } : r)));
       setCurrent((c) => (c && c.id === rec.id ? { ...c, locked: !rec.locked } : c));
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errMsg(e));
     }
   }
 
@@ -280,7 +288,9 @@ export default function Playback() {
             <section className="segments" aria-label="分段列表">
               <div className="segments-head">
                 <h2>分段</h2>
-                <span className="muted">每段 5 分钟 · 共 {recordings.length} 段</span>
+                <span className="muted">
+                  {segMinutes(sorted) ? `每段约 ${segMinutes(sorted)} 分钟 · ` : ""}共 {recordings.length} 段
+                </span>
               </div>
               <table>
                 <thead>

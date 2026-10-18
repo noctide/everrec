@@ -27,6 +27,11 @@ class LogLine(BaseModel):
 
 class Heartbeat(BaseModel):
     code: str = Field(description="位置编号，例如 HD-PD-A-3F-012")
+    location: dict[str, str] = Field(
+        default={},
+        description="六级位置 dept/section/area/site/spot/number 和编号名称 label；"
+        "服务端据此把设备归到组织树。旧版 Agent 不带，设备归入“未归位”",
+    )
     hostname: str
     agent_version: str
     sent_at: datetime
@@ -54,8 +59,10 @@ class HeartbeatReply(BaseModel):
     config_version: int = 0
     # 服务器下发的合并后最终配置（设计文档 7）；为空表示沿用本地/缓存
     settings: dict = {}
-    # 位置选项（州/区/楼栋/楼层），供桌面端设置页做下拉（tasks.md WP4）
+    # 位置选项：各层级可选值（平铺），兼容用；联动下拉用下面的 location_tree
     location_options: dict = {}
+    # 组织树 [{level, code, name, children:[...]}]，桌面端设置页逐级联动选择
+    location_tree: list = []
     # 首次心跳时签发设备令牌；之后所有 /agent/v1/* 需带它（tasks.md WP5）
     token: str | None = None
 

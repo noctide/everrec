@@ -15,7 +15,7 @@ from everrec_server.main import create_app
 from everrec_server.settings import Settings
 
 
-def _app(tmp_path, api_token="ro-token"):
+def _app(tmp_path):
     settings = Settings(
         database_url=f"sqlite:///{tmp_path}/t.db",
         recordings_dir=tmp_path / "recordings",
@@ -23,7 +23,6 @@ def _app(tmp_path, api_token="ro-token"):
         retention_seconds=3600,
         admin_password="test",
         secret_key="test-secret",
-        api_token=api_token,
     )
     return create_app(settings), settings
 
@@ -47,36 +46,36 @@ def _next_hb(c: TestClient, token: str, code="HD-A-012"):
     return c.post("/agent/v1/heartbeat", json=_hb(code), headers={"X-Agent-Token": token})
 
 
-def test_api_requires_login(tmp_path):
+def test_reads_public_writes_require_login(tmp_path):
     app, _ = _app(tmp_path)
     with TestClient(app) as c:
-        assert c.get("/api/v1/devices").status_code == 401
-        assert c.get("/api/v1/settings").status_code == 401
+        # 读接口公开，便于现场维护人员直接看状态
+        assert c.get("/api/v1/devices").status_code == 200
+        assert c.get("/api/v1/settings").status_code == 200
+        # 写操作未登录被拒
+        assert c.put("/api/v1/settings/global", json={"quality": "lean"}).status_code == 401
         # 登录接口本身不需要登录
         assert c.post("/api/v1/login", json={"password": "wrong"}).status_code == 401
 
 
-def test_login_sets_session_cookie_and_grants_access(tmp_path):
+def test_auth_status_reports_login_state(tmp_path):
+    app, _ = _app(tmp_path)
+    with TestClient(app) as c:
+        # 未登录：logged_in=false（接口本身公开可访问）
+        assert c.get("/api/v1/auth/status").json() == {"logged_in": False}
+        # 登录后：logged_in=true
+        _login(c)
+        assert c.get("/api/v1/auth/status").json() == {"logged_in": True}
+
+
+def test_login_sets_session_cookie_and_grants_write(tmp_path):
     app, _ = _app(tmp_path)
     with TestClient(app) as c:
         assert _login(c).status_code == 200
         assert SESSION_COOKIE in c.cookies
-        assert c.get("/api/v1/devices").status_code == 200
+        assert c.put("/api/v1/settings/global", json={"quality": "lean"}).status_code == 200
         c.post("/api/v1/logout")
-        assert c.get("/api/v1/devices").status_code == 401
-
-
-def test_bearer_token_grants_read_only_devices(tmp_path):
-    app, _ = _app(tmp_path, api_token="ro-token")
-    with TestClient(app) as c:
-        _first_hb(c)
-        r = c.get("/api/v1/devices", headers={"Authorization": "Bearer ro-token"})
-        assert r.status_code == 200
-        # 只读令牌只能看设备墙，不能改设置
-        w = c.put("/api/v1/settings/global", json={"quality": "lean"},
-                  headers={"Authorization": "Bearer ro-token"})
-        assert w.status_code == 401
-        assert c.get("/api/v1/devices", headers={"Authorization": "Bearer wrong"}).status_code == 401
+        assert c.put("/api/v1/settings/global", json={"quality": "lean"}).status_code == 401
 
 
 def test_first_heartbeat_issues_token_and_later_requires_it(tmp_path):
@@ -121,12 +120,10 @@ def test_password_hash_stored_not_plaintext(tmp_path):
         assert row is not None and "test" not in row.value
 
 
-def test_settings_writes_require_session_not_bearer(tmp_path):
-    """只读 API 令牌不能用于改配置（tasks.md WP5）。"""
-    app, _ = _app(tmp_path, api_token="ro-token")
+def test_settings_writes_require_login(tmp_path):
+    """改配置必须先登录管理员会话。"""
+    app, _ = _app(tmp_path)
     with TestClient(app) as c:
-        hdr = {"Authorization": "Bearer ro-token"}
-        assert c.get("/api/v1/settings", headers=hdr).status_code == 401
-        assert c.put("/api/v1/settings/global", json={"quality": "lean"}, headers=hdr).status_code == 401
+        assert c.put("/api/v1/settings/global", json={"quality": "lean"}).status_code == 401
         _login(c)
         assert c.put("/api/v1/settings/global", json={"quality": "lean"}).status_code == 200

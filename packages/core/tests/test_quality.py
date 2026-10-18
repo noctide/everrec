@@ -73,7 +73,7 @@ def test_command_uses_derived_bitrate(test_cfg):
         ("recording: {quality: superhd}\n", "recording.quality"),
         ("recording: {fps: 30}\n", "recording.fps"),
         ("recording: {resolution: 4k}\n", "recording.resolution"),
-        ("location: {building: A栋, number: '012'}\n", "location.building"),
+        ("location: {area: A栋, number: '012'}\n", "location.area"),
         ("recording: {segment_seconds: abc}\n", "recording.segment_seconds"),
     ],
 )

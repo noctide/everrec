@@ -19,14 +19,38 @@ from .profiles import DEFAULT_QUALITY, FPS_STOPS, LEGACY_PROFILE, Encoding, Qual
 CODE_PART = re.compile(r"^[A-Za-z0-9]+$")
 
 
-class Location(BaseModel):
-    state: str = Field(default="", description="州")
-    district: str = Field(default="", description="区")
-    building: str = Field(default="", description="楼栋")
-    floor: str = Field(default="", description="楼层")
-    number: str = Field(default="", description="编号")
+# 位置层级，从大到小：部门 - 科室 - 区域 - 属地 - 位置 - 编号。前五级组成组织树，编号是一台电脑。
+LOCATION_LEVELS = ("dept", "section", "area", "site", "spot")
+LEVEL_NAMES = {
+    "dept": "部门", "section": "科室", "area": "区域", "site": "属地", "spot": "位置", "number": "编号",
+}
 
-    @field_validator("*")
+# 旧版（州/区/楼栋/楼层）字段自动对应到新层级。新层级里没用到的（属地）留空，
+# 空层级不进编号，所以旧编号字符串不变，录像目录和已有录像不受影响。
+_LEGACY_LEVELS = {"state": "dept", "district": "section", "building": "area", "floor": "spot"}
+
+
+class Location(BaseModel):
+    dept: str = Field(default="", description="部门")
+    section: str = Field(default="", description="科室")
+    area: str = Field(default="", description="区域")
+    site: str = Field(default="", description="属地")
+    spot: str = Field(default="", description="位置")
+    number: str = Field(default="", description="编号")
+    label: str = Field(default="", description="编号的中文名称，只用于显示（可含中文）")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _upgrade_legacy(cls, data):
+        if isinstance(data, dict) and any(k in data for k in _LEGACY_LEVELS):
+            data = dict(data)
+            for old, new in _LEGACY_LEVELS.items():
+                if old in data:
+                    v = data.pop(old)
+                    data.setdefault(new, v)
+        return data
+
+    @field_validator("dept", "section", "area", "site", "spot", "number")
     @classmethod
     def _only_ascii_code(cls, v: str) -> str:
         v = str(v).strip()
@@ -34,10 +58,15 @@ class Location(BaseModel):
             raise ValueError("位置字段只能用英文和数字（会进文件路径）")
         return v
 
+    @field_validator("label")
+    @classmethod
+    def _strip_label(cls, v: str) -> str:
+        return str(v).strip()
+
     @property
     def code(self) -> str:
-        """位置编号，例如 HD-PD-A-3F-012。空字段跳过。"""
-        parts = [self.state, self.district, self.building, self.floor, self.number]
+        """位置编号，例如 FIN-AP-E-HQ-F3-012。空字段跳过。"""
+        parts = [self.dept, self.section, self.area, self.site, self.spot, self.number]
         return "-".join(p for p in parts if p) or "UNASSIGNED"
 
 
@@ -62,7 +91,9 @@ class Recording(BaseModel):
     local_quota_gb: float = 20
     disk_usage_limit: float = 0.85
     watermark: bool = True
-    segment_seconds: int = Field(default=300, ge=2, le=3600)
+    # 一个录像文件多长。默认 1 小时（2026-10 Leo 定）：文件数最少、索引最轻；
+    # 代价是最新一段要切完才归档上传，所以最新画面最多晚一个分段时长才能回放。
+    segment_seconds: int = Field(default=3600, ge=2, le=3600)
 
     @model_validator(mode="before")
     @classmethod
@@ -86,11 +117,24 @@ class Recording(BaseModel):
         return resolve(self.quality, self.resolution, self.fps)
 
 
+class Screenshot(BaseModel):
+    """定时截屏：本地设置（跟录像目录同级），服务器不下发；开关关着就完全不抓。
+
+    抓屏只能在登录用户的会话里做（Windows 服务在 Session 0，抓不到桌面），
+    所以由客户端进程按这里的间隔存图，存到安装文件夹的 screenshots/。
+    """
+
+    enabled: bool = False
+    interval_seconds: int = Field(default=300, ge=60, le=3600)
+    keep_files: int = Field(default=2000, ge=1)  # 最多留多少张，超了删最旧的
+
+
 class AgentConfig(BaseModel):
     server: str = Field(default="", description="服务器或子公司中转节点地址；留空则纯本地运行")
     location: Location = Location()
     camera: Camera = Camera()
     recording: Recording = Recording()
+    screenshot: Screenshot = Screenshot()
     autostart: bool = True
     heartbeat_seconds: int = 30
 

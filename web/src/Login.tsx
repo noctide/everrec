@@ -2,7 +2,7 @@ import { useState } from "react";
 import { login } from "./api";
 
 // 登录页（tasks.md WP5）：一个管理员密码，会话 Cookie 由浏览器保管。
-export default function Login({ onLogin }: { onLogin: () => void }) {
+export default function Login({ onLogin, onCancel }: { onLogin: () => void; onCancel?: () => void }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -45,6 +45,11 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
         <button className="primary" type="submit" disabled={!password || busy}>
           {busy ? "正在登录…" : "登录"}
         </button>
+        {onCancel && (
+          <button type="button" className="link login-back" onClick={onCancel}>
+            返回，先看看状态
+          </button>
+        )}
       </form>
     </div>
   );

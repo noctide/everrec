@@ -168,6 +168,22 @@ class Agent:
         data = {"config_version": reply.config_version, "settings": reply.settings}
         tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         tmp.replace(path)
+        self._cache_location_options(reply)
+
+    def _cache_location_options(self, reply: HeartbeatReply) -> None:
+        """服务器下发的位置选项缓存到 state/location_options.json，桌面端设置里做下拉用。"""
+        opts = reply.location_options
+        if isinstance(opts, dict) and any(opts.values()):
+            self._write_state_json("location_options.json", opts)
+        # 组织树（逐级联动下拉用）；服务器还没有任何节点时不覆盖，桌面端用本机配置文件
+        if isinstance(reply.location_tree, list) and reply.location_tree:
+            self._write_state_json("location_tree.json", reply.location_tree)
+
+    def _write_state_json(self, name: str, data) -> None:
+        path = self.cfg.state_dir / name
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(path)
 
     def _apply_to_cfg(self, settings: dict) -> None:
         """把下发的设置套到本地配置（不重启录制）。"""
@@ -199,6 +215,7 @@ class Agent:
         """
         hb = Heartbeat(
             code=self.cfg.code,
+            location=self.cfg.location.model_dump(),
             hostname=platform.node(),
             agent_version=__version__,
             sent_at=datetime.now().astimezone(),
@@ -281,7 +298,12 @@ class Agent:
 
     def _archive(self, seg, integrity: str = "ok", channel: str = "realtime") -> None:
         dest = archive_segment(self.cfg.recordings_dir, seg)
-        entry = IndexEntry(str(dest), seg.started_at.isoformat(), dest.stat().st_size, str(integrity))
+        st = dest.stat()
+        # 实际时长 = 最后写盘时刻 - 文件名里的开始时刻（切段后 mtime 不再变）。
+        # 分段时长不再是固定值（默认 1 小时，也可能被服务器改），时间轴只能按这个画。
+        duration = max(0.0, st.st_mtime - seg.started_at.timestamp())
+        entry = IndexEntry(str(dest), seg.started_at.isoformat(), st.st_size, str(integrity),
+                           duration=round(duration, 1))
         self.index.add(entry)
         log.info("分段已归档：%s", dest.relative_to(self.cfg.recordings_dir))
         if self.uploader:
@@ -365,6 +387,7 @@ class Agent:
     def build_heartbeat(self) -> Heartbeat:
         return Heartbeat(
             code=self.cfg.code,
+            location=self.cfg.location.model_dump(),
             hostname=platform.node(),
             agent_version=__version__,
             sent_at=datetime.now().astimezone(),
