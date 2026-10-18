@@ -5,12 +5,15 @@
 server: https://everrec.hq.local      # 子公司填中转节点地址；留空则纯本地运行
 
 location:              # 只能用英文和数字，会进文件路径
-  state: HD            # 州
-  district: PD         # 区
-  building: A          # 楼栋
-  floor: 3F            # 楼层
-  number: "012"        # 编号
-# 位置编号自动生成：HD-PD-A-3F-012
+  dept: FIN            # 部门
+  section: AP          # 科室
+  area: E              # 区域
+  site: HQ             # 属地
+  spot: F3             # 位置
+  number: "012"        # 编号（哪一台）
+  label: 三号收银台    # 可选，中文备注，只给人看，不进路径
+# 位置编号自动生成（空的层级自动跳过）：FIN-AP-E-HQ-F3-012
+# 旧配置里的 state / district / building / floor 仍可读，分别对应 dept / section / area / spot
 
 camera:
   type: usb            # usb；开发自测可用 test（FFmpeg 内置测试画面）
@@ -25,7 +28,14 @@ recording:
   folder: recordings   # 默认在安装文件夹内
   local_quota_gb: 20
   watermark: true
-  segment_seconds: 300
+  # 一个录像文件多长（秒）。默认 1 小时：文件少、索引轻；
+  # 代价是最新一段要录完才上传，回放最新画面最多晚这么久。
+  segment_seconds: 3600
+
+screenshot:              # 定时截屏：本地设置，服务器不改它
+  enabled: false         # 开了就按间隔把当前屏幕存到安装文件夹的 screenshots/
+  interval_seconds: 300  # 多久一张（60–3600 秒）
+  keep_files: 2000       # 最多留多少张，超了删最旧的
 
 autostart: true
 heartbeat_seconds: 30

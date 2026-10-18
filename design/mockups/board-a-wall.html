@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>方案 A · 看板（等大格子监控墙）— EverRec</title>
+<link rel="stylesheet" href="mock.css">
+<style>
+  /* 本页专用：1920 宽下取 7 列 × 5 行，35 台正好一屏放完 */
+  .wall { grid-template-columns: repeat(auto-fill, minmax(204px, 1fr)); }
+</style>
+</head>
+<body>
+
+<div class="mockbar">
+  <b>看板改版候选稿</b><span>方案 A · 等大格子监控墙</span>
+  <a href="board-a-wall.html" class="on">A 画面墙</a>
+  <a href="board-b-table.html">B 巡视图表</a>
+  <a href="index.html">两版取舍</a>
+  <span class="sp">示例数据 · 1920 宽下 7 列 × 5 行，35 台一屏放完</span>
+</div>
+
+<header class="topbar">
+  <div class="brand">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+      <circle cx="12" cy="12" r="9"></circle><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"></circle>
+    </svg>
+    EverRec <span class="dim">恒录</span>
+  </div>
+  <nav class="nav" aria-label="主导航">
+    <a href="board-a-wall.html" class="on">看板</a>
+    <a href="#">设备墙</a>
+    <a href="#">录像回放</a>
+    <a href="#">设置</a>
+  </nav>
+  <div class="top-right">
+    <span>管理员 · 王建国</span>
+    <button class="btn">退出</button>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="rail">
+    <input class="rail-search" type="search" placeholder="搜索部门、位置、编号…" aria-label="搜索组织">
+    <div class="tree">
+      <button class="tree-row d1 on"><span class="tw"></span><span class="dot bad"></span><span class="nm">全部</span><span class="ct alert">3/35</span></button>
+
+      <button class="tree-row d1"><span class="tw">▾</span><span class="dot bad"></span><span class="nm">财务部</span><span class="ct alert">2/18</span></button>
+      <button class="tree-row d2"><span class="tw">▾</span><span class="dot bad"></span><span class="nm">一科</span><span class="ct alert">2/12</span></button>
+      <button class="tree-row d3"><span class="tw"></span><span class="dot bad"></span><span class="nm">东区</span><span class="ct alert">1/8</span></button>
+      <button class="tree-row d3"><span class="tw"></span><span class="dot bad"></span><span class="nm">西区</span><span class="ct alert">1/4</span></button>
+      <button class="tree-row d2"><span class="tw">▸</span><span class="dot ok"></span><span class="nm">二科</span><span class="ct">6</span></button>
+
+      <button class="tree-row d1"><span class="tw">▸</span><span class="dot warn"></span><span class="nm">人事部</span><span class="ct">9</span></button>
+      <button class="tree-row d1"><span class="tw">▸</span><span class="dot bad"></span><span class="nm">运营部</span><span class="ct alert">1/8</span></button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="head">
+      <nav class="crumbs" aria-label="当前位置"><span>全部</span><span class="sep">/</span><b>35 台</b></nav>
+      <span class="role">一眼看出哪些电脑没在正常录像</span>
+      <div class="head-right">
+        <a class="owner" href="#" title="点进设置页的「组织与责任人」"><span class="k">管辖</span><b>全部 35 台</b><span class="from">按部门分管</span></a>
+        <a class="link" href="#">设备墙 · 逐台查画面与日志 →</a>
+      </div>
+    </div>
+
+    <div class="strip">
+      <button class="seg on"><span>全部</span><span class="n">35</span></button>
+      <button class="seg"><span class="dot ok"></span><span>正常</span><span class="n">29</span></button>
+      <button class="seg"><span class="dot warn"></span><span>离线本地</span><span class="n">3</span></button>
+      <button class="seg"><span class="dot bad"></span><span>需要处理</span><span class="n">3</span></button>
+      <div class="strip-right">
+        <span>14:02:11 更新 · 每 10 秒</span>
+        <button class="btn" aria-label="进入大屏模式">全屏</button>
+      </div>
+    </div>
+
+    <div class="wall" id="wall"></div>
+  </main>
+</div>
+
+<script>
+// 35 台。st: ok 正常 / warn 离线本地录制 / bad 没在录像 / lost 失联
+// ago: 正常设备"最后消息"；why: 异常设备"为什么"。osd: 画面右上角的时间戳（模拟 CCTV 叠加）
+const DEVICES = [
+  ["FIN-AP-E-HQ-F3-012", "3 号收银台", "ok",   "12 秒前", "", 0, "14:02:05"],
+  ["FIN-AP-E-HQ-F3-015", "4 号收银台", "ok",   "8 秒前",  "", 0, "14:02:09"],
+  ["FIN-AP-E-HQ-F3-018", "5 号收银台", "warn", "", "离线 3 小时 · 待补传 46 段", 46, "14:02:04"],
+  ["FIN-AP-E-HQ-F3-021", "6 号收银台", "bad",  "", "60 秒没增长 · 重启 2 次", 0, "14:00:58"],
+  ["FIN-AP-E-HQ-F3-024", "一科办公室", "ok",   "5 秒前",  "", 0, "14:02:12"],
+  ["FIN-AP-E-HQ-F3-027", "一科会议桌", "ok",   "9 秒前",  "", 0, "14:02:08"],
+  ["FIN-AP-E-HQ-F3-030", "一科档案柜", "ok",   "2 秒前",  "", 0, "14:02:15"],
+  ["FIN-AP-E-HQ-F3-033", "走廊入口",   "ok",   "21 秒前", "", 0, "14:01:56"],
+  ["FIN-AP-W-HQ-F2-006", "西区收银台", "warn", "", "离线 1 小时 · 待补传 12 段", 12, "14:02:02"],
+  ["FIN-AP-W-HQ-F2-009", "西区办公室", "ok",   "14 秒前", "", 0, "14:02:03"],
+  ["FIN-AP-W-HQ-F2-012", "西区档案柜", "lost", "", "6 小时没消息 · 最后画面 08:14", 0, "08:14:26"],
+  ["FIN-AP-W-HQ-F2-015", "西区走廊",   "ok",   "3 秒前",  "", 0, "14:02:14"],
+
+  ["FIN-CS-E-HQ-F1-004", "二科办公室", "ok",   "17 秒前", "", 0, "14:02:00"],
+  ["FIN-CS-E-HQ-F1-007", "二科会议桌", "ok",   "6 秒前",  "", 0, "14:02:11"],
+  ["FIN-CS-E-HQ-F1-010", "二科档案柜", "ok",   "31 秒前", "", 0, "14:01:46"],
+  ["FIN-CS-W-HQ-F1-003", "二科走廊",   "ok",   "11 秒前", "", 0, "14:02:06"],
+  ["FIN-CS-W-HQ-F1-006", "备件柜",     "ok",   "26 秒前", "", 0, "14:01:51"],
+  ["FIN-CS-W-HQ-F1-009", "打印区",     "ok",   "4 秒前",  "", 0, "14:02:13"],
+
+  ["HR-PY-N-HQ-F5-001", "薪酬办公室", "ok",   "19 秒前", "", 0, "14:01:58"],
+  ["HR-PY-N-HQ-F5-004", "薪酬档案柜", "ok",   "7 秒前",  "", 0, "14:02:10"],
+  ["HR-PY-S-HQ-F5-007", "薪酬走廊",   "ok",   "23 秒前", "", 0, "14:01:54"],
+  ["HR-PY-S-HQ-F5-010", "薪酬会议桌", "ok",   "13 秒前", "", 0, "14:02:04"],
+
+  ["HR-RC-N-HQ-F2-002", "招聘面试间", "warn", "", "离线 22 分 · 待补传 4 段", 4, "14:02:01"],
+  ["HR-RC-N-HQ-F2-005", "招聘办公室", "ok",   "28 秒前", "", 0, "14:01:49"],
+  ["HR-RC-N-HQ-F2-008", "招聘前台",   "ok",   "16 秒前", "", 0, "14:02:01"],
+  ["HR-RC-S-HQ-F2-011", "人事走廊",   "ok",   "33 秒前", "", 0, "14:01:44"],
+  ["HR-RC-S-HQ-F2-014", "人事会议桌", "ok",   "41 秒前", "", 0, "14:01:36"],
+
+  ["OP-EA-N-SH-F1-020", "东区中控台", "ok",   "10 秒前", "", 0, "14:02:07"],
+  ["OP-EA-N-SH-F1-023", "东区入口",   "ok",   "24 秒前", "", 0, "14:01:53"],
+  ["OP-EA-S-SH-F2-026", "东区巡检点", "ok",   "15 秒前", "", 0, "14:02:02"],
+  ["OP-EA-S-SH-F2-029", "东区仓库",   "bad",  "", "摄像头被占用", 0, "13:47:12"],
+
+  ["OP-WA-N-SH-F3-031", "西区中控台", "ok",   "18 秒前", "", 0, "14:01:59"],
+  ["OP-WA-N-SH-F3-034", "西区入口",   "ok",   "29 秒前", "", 0, "14:01:48"],
+  ["OP-WA-S-SH-F4-037", "西区仓库",   "ok",   "36 秒前", "", 0, "14:01:41"],
+  ["OP-WA-S-SH-F4-040", "西区巡检点", "ok",   "44 秒前", "", 0, "14:01:33"]
+];
+
+const isOk = (st) => st === "ok";
+const tone = (st) => (st === "warn" ? "warn" : isOk(st) ? "" : "bad");     // lost 归到红
+const flagOf = (st) => (st === "warn" ? "离线本地录制" : st === "bad" ? "需要处理" : st === "lost" ? "失联" : "");
+
+const wall = document.getElementById("wall");
+wall.innerHTML = DEVICES.map(([code, name, st, ago, why, pend, osd], i) => {
+  const t = tone(st);
+  const flag = flagOf(st);
+  const meta = isOk(st) ? `${name} · ${ago}` : why;
+  const tip = `${code}  ${name}\n${isOk(st) ? "最后消息 " + ago : why}` + (pend ? `\n待补传 ${pend} 段` : "");
+  return `<button class="cell" data-st="${st}" title="${tip}">
+    <span class="frame">
+      <span class="img v${(i % 5) + 1}"></span>
+      ${flag ? `<span class="flag ${t}">${flag}</span>` : ""}
+      <span class="osd">${osd}</span>
+    </span>
+    <span class="cell-foot">
+      <span class="cell-code">${code}</span>
+      <span class="cell-meta ${t}"><span class="dot sm ${t || "ok"}"></span><span class="tx">${meta}</span></span>
+    </span>
+  </button>`;
+}).join("");
+</script>
+</body>
+</html>
