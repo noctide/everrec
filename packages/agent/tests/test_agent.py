@@ -41,6 +41,27 @@ def _run_for(agent: Agent, seconds: float) -> list[bool]:
     return seen
 
 
+def test_counts_logged_in_sessions(monkeypatch):
+    """自动更新要替换用户会话里的 exe，所以心跳要报告有几个登录会话；查不到时按有人登录。"""
+    import psutil
+
+    from everrec_agent.agent import count_logged_in_users
+
+    monkeypatch.setattr(psutil, "users", lambda: [
+        type("U", (), {"terminal": "console", "name": "leo"})(),
+        type("U", (), {"terminal": "rdp-tcp#1", "name": "leo"})(),
+    ])
+    assert count_logged_in_users() == 2
+    monkeypatch.setattr(psutil, "users", lambda: [])
+    assert count_logged_in_users() == 0
+
+    def boom():
+        raise OSError("查不到")
+
+    monkeypatch.setattr(psutil, "users", boom)
+    assert count_logged_in_users() == 1, "查不到时宁可当成有人登录，别把正在用的程序换坏"
+
+
 def test_records_offline_and_archives(cfg):
     cfg.server = "http://127.0.0.1:9"  # 没人监听：模拟服务器不可用
     agent = Agent(cfg)

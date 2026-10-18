@@ -41,6 +41,21 @@ log = logging.getLogger("agent")
 TICK_SECONDS = 2
 UPDATE_CHECK_SECONDS = 3600  # 每小时问一次服务器是否该更新；真正装不装由服务端按时段判定
 
+
+def count_logged_in_users() -> int:
+    """当前有几个交互登录会话。
+
+    自动更新要替换托盘和录屏进程的 exe，它们跑在登录会话里、会被文件占用，所以服务端只在
+    这个数为 0 时才让 Agent 装。psutil.users() 在 Windows 上列的是 WTS 会话，服务自己不算一个。
+    """
+    try:
+        import psutil
+
+        return len({u.terminal or u.name for u in psutil.users()})
+    except Exception:  # 查不到就当有人登录，宁可不更新也别把正在用的程序换坏
+        log.debug("查登录会话失败，按有人登录处理", exc_info=True)
+        return 1
+
 THUMBNAIL_SECONDS = 60  # 缩略图每分钟发一张（设计文档 6.2）
 
 
@@ -231,6 +246,7 @@ class Agent:
             checks=self.checks,
             problems=self.problems,
             paused=self.paused,
+            logged_in_users=count_logged_in_users(),
             restarts=self.recorder.restarts,
             pending_sync=self.index.pending_count(),
             disk_used=round(self.disk_used, 3),
@@ -423,6 +439,7 @@ class Agent:
             checks=self.checks,
             problems=self.problems,
             paused=self.paused,
+            logged_in_users=count_logged_in_users(),
             restarts=self.recorder.restarts,
             pending_sync=self.index.pending_count(),
             disk_used=round(self.disk_used, 3),

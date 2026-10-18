@@ -38,6 +38,8 @@ class UpdatePlan:
 
     update_available: bool = False
     should_update: bool = False
+    # 有新版、也在时段内，但机器上有人登录着，服务端让等（WP9：不换正在用的 exe）
+    waiting_for_logout: bool = False
     latest_version: str | None = None
     update_mode: str = "auto"
     sha256: str = ""
@@ -126,6 +128,10 @@ def run_update(server: str, code: str, token: str, current_version: str,
     if not plan.update_available:
         return "no-update"
     if not plan.should_update:
+        if plan.waiting_for_logout:
+            # 有人登录着：托盘和录屏进程正在用这些 exe，换了会坏，等服务端下次放行
+            log.info("发现新版本 %s，但机器上有人登录，等没人登录时再装", plan.latest_version)
+            return "waiting-for-logout"
         # 只提醒模式或不在时段内：记日志，不下载
         log.info("发现新版本 %s，但当前不自动安装（模式 %s）", plan.latest_version, plan.update_mode)
         return "notify"
