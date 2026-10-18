@@ -4,7 +4,7 @@
 
 .DESCRIPTION
   在 Windows 上运行（需已 uv sync 装好依赖 + pyinstaller）。
-  产出 dist\everrec-agent、dist\everrec-desktop，
+  产出 dist\everrec-agent、dist\everrec-desktop、dist\everrec-screen，
   供 Inno Setup（everrec.iss）打安装包。
 
   FFmpeg 从 -FfmpegDir 指定的目录取 ffmpeg.exe / ffprobe.exe（CI 先下载好），
@@ -22,10 +22,12 @@ $ErrorActionPreference = "Stop"
 $root = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 Set-Location $root
 
-# 两个程序：名字 -> 入口脚本 -> 是否 GUI（GUI 不带控制台窗口）
+# 三个程序：名字 -> 入口脚本 -> 是否 GUI（GUI 不带控制台窗口）
 $apps = @(
     @{ Name = "everrec-agent";   Entry = "packaging\windows\entry\agent.py";   Gui = $false },
-    @{ Name = "everrec-desktop"; Entry = "packaging\windows\entry\desktop.py"; Gui = $true  }
+    @{ Name = "everrec-desktop"; Entry = "packaging\windows\entry\desktop.py"; Gui = $true  },
+    # 录屏进程：跑在登录用户的会话里，无窗口（tasks.md WP12）
+    @{ Name = "everrec-screen";  Entry = "packaging\windows\entry\screen.py";  Gui = $true  }
 )
 
 $srcDirs = @(

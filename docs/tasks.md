@@ -202,15 +202,19 @@ Leo 已定：录屏与摄像头**二选一**，同一个数据模型里把 `sour
 - 一键截屏：客户端主界面"保存当前屏幕"，`QScreen` 抓屏 + 时间水印，存 `screenshots/`。
 - 定时截屏：`screenshot` 段（`enabled` / `interval_seconds` / `keep_files`）是本地设置，服务器不下发；
   由客户端进程的 `TimedScreenshots` 按间隔存图、超 `keep_files` 删最旧的。这是"本地保存"，不上传。
+- 录屏参数与数据模型：`CameraType.SCREEN`；`ffmpeg._input_args` 的 gdigrab 分支；屏幕源默认 1080P / 8 帧、
+  码率系数 0.10（`profiles.SCREEN_*`）；`recording.source` 列（0011 迁移）+ `UploadRequest.source`
+  （默认 `camera`，旧版 Agent 兼容），服务端落库并随接口返回。
+- 会话进程 `everrec-screen`（`agent/screen.py`）：跑在登录用户会话里，锁屏停 FFmpeg、解锁恢复，
+  写 `state/screen.json`；独立单实例锁（`EverRecScreen`），多用户同时登录时只让第一个会话录；
+  配置里不是录屏时直接退出，所以启动项可以一直挂着。打包入口 `packaging/windows/entry/screen.py`，
+  安装包写进 HKLM Run（所有用户登录启动）。
+- Agent 屏幕模式：不启动自己的 FFmpeg，改为读 `state/screen.json` 监督会话进程；锁屏时数据流检查不判失败、
+  不去重启，心跳带 `paused="锁屏暂停"`；服务端在这种情况下判 `ok` 且不推送事件；设备墙/抽屉显示"锁屏暂停"。
 
 **还没做的**：
-- `CameraType` 加 `SCREEN`；`core/ffmpeg.py` 的 `_input_args` 加 `-f gdigrab -framerate <fps> -i desktop` 分支，
-  屏幕源跳过摄像头格式探测，按画质挡缩放（默认 1080P / 8 帧，屏幕源码率系数用 0.10）。
-- 新增无窗口入口 `everrec-screen`，由安装脚本加进"所有用户登录启动"，跑在用户会话里录屏并写 `_spool`；
-  Agent 在屏幕模式下**不启动自己的 FFmpeg**，健康检查 ③ 改读 `state/screen.json`；锁屏报"锁屏暂停"，不算异常。
-  会话进程用独立单实例锁，多用户同时登录时只让第一个会话录。
-- `recording.source` 列（Alembic 迁移，默认 `camera`）+ `UploadRequest.source`（默认 `camera`，向后兼容）；
-  服务端落库并随接口返回，界面先不筛。
+- 客户端设置里能选"录摄像头 / 录屏幕"（本地设置，服务器不下发）。眼下用
+  `everrec-agent set-config camera.type=screen` 或直接改配置文件切过去。
 - **验收**：Linux 上用 `testsrc` 走同一代码路径；Windows 上要 Leo 逐条验证（锁屏、切换用户、改分辨率、多显示器、
   杀进程后自动重启），PR 里写清"需要 Leo 在 Windows 上验证"，不得声称已验证。
 

@@ -40,6 +40,12 @@ RECOMMENDED_FPS = 10
 BITS_PER_PIXEL = 0.07
 CRF = 28
 
+# 屏幕源（Windows 桌面，tasks.md WP12）：默认 1080P / 8 帧；文字和表格比人脸更需要细节，
+# 码率系数比摄像头高（0.10）。
+SCREEN_DEFAULT_RESOLUTION = Resolution.P1080
+SCREEN_DEFAULT_FPS = 8
+SCREEN_BITS_PER_PIXEL = 0.10
+
 
 class Quality(StrEnum):
     SAVER = "saver"        # 省空间
@@ -75,6 +81,7 @@ LEGACY_PROFILE = {"xlow": Quality.SAVER, "low": Quality.LEAN, "mid": Quality.STA
 class Encoding:
     resolution: Resolution
     fps: int
+    bits_per_pixel: float = BITS_PER_PIXEL  # 摄像头 0.07，屏幕源 0.10
 
     @property
     def width(self) -> int:
@@ -86,7 +93,7 @@ class Encoding:
 
     @property
     def maxrate_kbps(self) -> int:
-        return max(32, round(self.width * self.height * self.fps * BITS_PER_PIXEL / 1000))
+        return max(32, round(self.width * self.height * self.fps * self.bits_per_pixel / 1000))
 
     @property
     def bufsize_kbps(self) -> int:

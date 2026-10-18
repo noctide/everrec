@@ -82,6 +82,21 @@ def test_upload_roundtrip_verifies_and_archives(tmp_path):
     assert dest.exists() and dest.read_bytes() == content
 
 
+def test_upload_keeps_source(tmp_path):
+    """录像来源随上传落库：screen = 桌面录屏，缺省按 camera（tasks.md WP12）。"""
+    app, url, _settings = _app(tmp_path)
+    content = b"x" * 1000
+    req = _req(content, source="screen")
+    with TestClient(app) as c:
+        uid = c.post("/agent/v1/uploads", json=req.model_dump(mode="json"),
+                     headers={"X-Agent-Token": _register(c)}).json()["upload_id"]
+        assert c.put(f"/agent/v1/uploads/{uid}", params={"offset": 0},
+                     content=content).status_code == 200
+        assert c.post(f"/agent/v1/uploads/{uid}/complete").status_code == 200
+    with Session(create_engine(url)) as s:
+        assert s.scalar(select(Recording)).source == "screen"
+
+
 def test_offset_mismatch_returns_409_with_correct_received(tmp_path):
     app, *_ = _app(tmp_path)
     content = b"abcdef"

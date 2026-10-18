@@ -1,6 +1,7 @@
 # ruff: noqa: E501  (dshow 原始输出样例行较长)
 """画质挡位、码率自动计算、摄像头取流格式选择、配置写错不停录。"""
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from everrec_core.config import AgentConfig, Camera, CameraType, load_config
 from everrec_core.ffmpeg import CameraMode, build_record_command, choose_mode, parse_dshow_modes
 from everrec_core.profiles import (
     DEFAULT_QUALITY,
+    SCREEN_BITS_PER_PIXEL,
     Encoding,
     Quality,
     Resolution,
@@ -62,6 +64,26 @@ def test_command_uses_derived_bitrate(test_cfg):
     enc = test_cfg.recording.encoding
     assert cmd[cmd.index("-maxrate") + 1] == f"{enc.maxrate_kbps}k"
     assert f"testsrc2=size={enc.width}x{enc.height}:rate={enc.fps}" in cmd
+
+
+def test_screen_source_uses_own_defaults_and_gdigrab(test_cfg):
+    """录屏源：默认 1080P / 8 帧、码率系数 0.10，输入走 gdigrab（tasks.md WP12）。"""
+    test_cfg.camera = Camera(type=CameraType.SCREEN)
+    enc, mode, note = ff.effective_encoding(test_cfg)
+    assert (enc.width, enc.height, enc.fps) == (1920, 1080, 8)
+    assert (mode, note) == (None, None)  # 屏幕不探测摄像头格式，也不会降分辨率
+    if sys.platform != "win32":
+        with pytest.raises(RuntimeError, match="Windows"):
+            build_record_command(test_cfg)
+        return
+    cmd = build_record_command(test_cfg)
+    assert cmd[cmd.index("-i") + 1] == "desktop" and "gdigrab" in cmd
+    assert cmd[cmd.index("-maxrate") + 1] == f"{enc.maxrate_kbps}k"
+
+
+def test_screen_bitrate_coefficient_is_higher():
+    screen = Encoding(Resolution.P1080, 8, SCREEN_BITS_PER_PIXEL)
+    assert screen.maxrate_kbps > Encoding(Resolution.P1080, 8).maxrate_kbps
 
 
 # ---------- 配置写错不停录 ----------

@@ -22,7 +22,7 @@ from pathlib import Path
 
 import httpx
 
-from everrec_core.config import AgentConfig
+from everrec_core.config import AgentConfig, CameraType
 from everrec_core.protocol import UploadCompleteReply, UploadInitReply, UploadRequest
 from everrec_core.repair import probe_duration
 
@@ -295,6 +295,7 @@ class Uploader:
             sha256=sha,
             integrity=entry.integrity,
             channel=channel,
+            source="screen" if self.cfg.camera.type == CameraType.SCREEN else "camera",
         )
 
         self._check_target(generation)

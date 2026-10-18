@@ -44,6 +44,8 @@ class Heartbeat(BaseModel):
     current_segment: str | None = None
     checks: Checks = Checks()
     problems: list[str] = []
+    # 不算异常、但确实没画面的原因（录屏时锁屏 / 没人登录）。有值时服务端不判异常（WP12）
+    paused: str = ""
     restarts: int = 0
     pending_sync: int = 0
     disk_used: float = 0
@@ -82,6 +84,16 @@ class UploadRequest(BaseModel):
     sha256: str
     integrity: str  # ok / repaired / partial
     channel: str    # realtime / backfill
+    # 这段画面的来源：camera = 摄像头，screen = 桌面录屏（tasks.md WP12）。
+    # 旧版 Agent 不带这个字段，按摄像头算；第一版界面不按来源筛，只落库。
+    source: str = "camera"
+
+    @field_validator("source")
+    @classmethod
+    def _source(cls, v: str) -> str:
+        if v not in ("camera", "screen"):
+            raise ValueError("来源只能是 camera 或 screen")
+        return v
 
     @field_validator("code")
     @classmethod
