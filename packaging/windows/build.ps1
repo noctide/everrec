@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   EverRec 打包脚本（tasks.md WP9）：PyInstaller onedir 打三个程序，FFmpeg 放进每个程序的 bin/。
 
