@@ -90,9 +90,15 @@ try {
     Write-Log "设置配置文件权限失败（不影响安装）：$($_.Exception.Message)"
 }
 
-# 运行目录：录屏进程跑在登录用户的会话里，要往 recordings\_spool、state、logs 里写
+# 运行目录：这些目录登录用户要写
+#   recordings —— 录屏进程往 _spool 里写分段
+#   state      —— 录屏进程写 screen.json、客户端读状态
+#   logs       —— 录屏进程写日志
+#   screenshots—— 客户端"保存当前画面"和定时截屏
+#   config     —— 客户端生成 config\location_options.json（位置下拉的选项）
+# 注意不要放宽整个安装目录：程序本体（agent 以 SYSTEM 跑）不能被普通用户替换。
 try {
-    foreach ($dir in @("recordings", "state", "logs")) {
+    foreach ($dir in @("recordings", "state", "logs", "screenshots", "config")) {
         $path = Join-Path $InstallDir $dir
         New-Item -ItemType Directory -Force -Path $path | Out-Null
         $acl = Get-Acl $path
@@ -101,7 +107,7 @@ try {
         $acl.SetAccessRule($rule)
         Set-Acl -Path $path -AclObject $acl
     }
-    Write-Log "已设运行目录权限：登录用户可写 recordings / state / logs"
+    Write-Log "已设运行目录权限：登录用户可写 recordings / state / logs / screenshots / config"
 } catch {
     Write-Log "设置运行目录权限失败（不影响安装）：$($_.Exception.Message)"
 }
