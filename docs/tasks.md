@@ -155,7 +155,8 @@
 
 **Agent 与界面之间的约定**（本包负责在 Agent 侧实现）：
 - Agent 每轮把状态原子写入 `state/status.json`（先写临时文件再改名），内容为当前 `Heartbeat` 模型的 JSON 加 `online` 字段。界面只读这个文件和日志目录，不直接控制录制。
-- 改设置：界面写配置文件需要 Windows 管理员权限（设计 4.6），通过 UAC 提权调用 `everrec-agent set-config ...`（新增子命令）完成；Agent 检测到配置文件变化，在下一分段边界生效。
+- 改设置：界面**直接写配置文件**，不弹 UAC（2026-10 Leo 定，见 AGENTS.md 第 2 节）；安装脚本把配置文件设成登录用户可改。
+  Agent 检测到配置文件变化，在下一分段边界生效。`everrec-agent set-config` 仍保留，给命令行和安装包静默参数用。
 
 **修复工具**（先做，最独立）：
 - 拖入文件或文件夹 → 「检查并修复」→ 结果列表，文字用 `repair.FRIENDLY_TEXT`。
