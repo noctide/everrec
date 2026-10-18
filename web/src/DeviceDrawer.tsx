@@ -1,5 +1,6 @@
-import { type Device } from "./api";
-import { ago, STATUS_TEXT } from "./labels";
+import { useEffect, useState } from "react";
+import { checkAuth, revokeDevice, type Device } from "./api";
+import { ago, errMsg, STATUS_TEXT } from "./labels";
 
 // 健康检查 ①②③④⑥（设计文档 6.1）
 const CHECK_LABEL: Record<string, string> = {
@@ -16,7 +17,38 @@ function ownerText(d: Device): string {
 }
 
 /** 一台设备的详情抽屉：看板和设备墙共用，避免两处各写一份。 */
-export default function DeviceDrawer({ device, onClose }: { device: Device; onClose: () => void }) {
+export default function DeviceDrawer({
+  device,
+  onClose,
+  onRevoked,
+}: {
+  device: Device;
+  onClose: () => void;
+  onRevoked?: () => void;
+}) {
+  const [canRevoke, setCanRevoke] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    checkAuth().then(setCanRevoke).catch(() => setCanRevoke(false));
+  }, []);
+
+  async function doRevoke() {
+    setBusy(true);
+    setError(null);
+    try {
+      await revokeDevice(device.code);
+      onRevoked?.();
+      onClose();
+    } catch (e) {
+      setError(errMsg(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="drawer-backdrop" onClick={onClose}>
       <aside
@@ -63,6 +95,27 @@ export default function DeviceDrawer({ device, onClose }: { device: Device; onCl
         <p style={{ marginTop: 16 }}>
           <a className="btn" href="#/playback">查看这台电脑的录像</a>
         </p>
+
+        {canRevoke && (
+          <div className="drawer-danger">
+            {confirming ? (
+              <>
+                <p>吊销后这台电脑要重新注册才能上报状态；录像不受影响，照常存在本机。</p>
+                <div className="actions">
+                  <button className="btn bad" type="button" disabled={busy} onClick={doRevoke}>
+                    {busy ? "吊销中…" : "确定吊销"}
+                  </button>
+                  <button className="btn" type="button" onClick={() => setConfirming(false)}>取消</button>
+                </div>
+              </>
+            ) : (
+              <button className="link" type="button" onClick={() => setConfirming(true)}>
+                吊销这台电脑的凭据
+              </button>
+            )}
+            {error && <p role="alert">{error}</p>}
+          </div>
+        )}
       </aside>
     </div>
   );

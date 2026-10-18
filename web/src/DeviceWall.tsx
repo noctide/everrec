@@ -133,7 +133,7 @@ export default function DeviceWall() {
         ))}
       </div>
 
-      {open && <DeviceDrawer device={open} onClose={() => setOpen(null)} />}
+      {open && <DeviceDrawer device={open} onClose={() => setOpen(null)} onRevoked={load} />}
     </main>
   );
 }

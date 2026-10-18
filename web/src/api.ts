@@ -95,6 +95,11 @@ export async function setRecordingLock(id: number, locked: boolean): Promise<voi
   await request(`/api/v1/recordings/${id}/${locked ? "lock" : "unlock"}`, { method: "POST" });
 }
 
+/** 吊销一台设备的凭据：它之后心跳/上传被拒，但本地照常录制（tasks.md WP5）。 */
+export async function revokeDevice(code: string): Promise<void> {
+  await request(`/api/v1/devices/${encodeURIComponent(code)}/revoke`, { method: "POST" });
+}
+
 // ---- 登录（tasks.md WP5） ----
 
 export async function login(password: string): Promise<void> {

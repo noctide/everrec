@@ -110,6 +110,12 @@ h1 { margin: 0; font-size: 16px; font-weight: 600; color: var(--strong); }
 .drawer dt { color: var(--muted); }
 .drawer dd { margin: 0; }
 .drawer h3 { font-size: 13px; margin: 18px 0 6px; color: var(--strong); }
+.drawer-danger { margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+.drawer-danger p { margin: 0 0 8px; }
+.drawer-danger p[role="alert"] { color: var(--bad); }
+.drawer-danger .actions { display: flex; align-items: center; gap: 8px; }
+.btn.bad { color: var(--bad); border-color: var(--bad-line); }
+.btn.bad:hover { background: var(--bad-bg); }
 .logs { list-style: none; padding: 0; margin: 0; font-size: 12px; }
 .logs li { padding: 6px 0; border-bottom: 1px solid var(--surface-2); }
 .logs span { color: var(--muted); }

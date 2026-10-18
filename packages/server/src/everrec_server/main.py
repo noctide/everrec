@@ -164,6 +164,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         token = request.cookies.get(auth.SESSION_COOKIE)
         return bool(token) and auth.verify_session_token(token, session_secret)
 
+    def _valid_bearer(request: Request) -> bool:
+        """只读 API 令牌（EVERREC_API_TOKEN），给其他系统查询用。没配置时永远不通过。"""
+        return bool(settings.api_token) and \
+            request.headers.get("Authorization", "") == f"Bearer {settings.api_token}"
+
     def record_transition(s: Session, agent: Agent, new: Status, now: datetime) -> None:
         ev = transition_event(agent.status, new, settings.lost_after_seconds)
         agent.status = new
@@ -410,11 +415,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
-        """读接口（GET）公开，写操作要登录；登录接口始终公开。"""
+        """读接口（GET）公开，写操作要登录；登录接口始终公开。
+
+        只读 API 令牌（EVERREC_API_TOKEN）给人以外的系统查设备用：它能读，写操作一律 403，
+        免得一个"只读"令牌被拿来做修改。
+        """
         path = request.url.path
         if path.startswith("/api/v1/"):
             if path in ("/api/v1/login", "/api/v1/logout") or request.method == "GET":
                 return await call_next(request)
+            if _valid_bearer(request):
+                return JSONResponse(status_code=403, content={"detail": "只读令牌不能修改"})
             if not _valid_session(request):
                 return JSONResponse(status_code=401, content={"detail": "未登录"})
         return await call_next(request)

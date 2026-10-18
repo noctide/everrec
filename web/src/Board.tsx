@@ -418,7 +418,9 @@ export default function Board() {
         )}
       </main>
 
-      {detail && <DeviceDrawer device={detail} onClose={() => setDetail(null)} />}
+      {detail && (
+        <DeviceDrawer device={detail} onClose={() => setDetail(null)} onRevoked={load} />
+      )}
     </div>
   );
 }

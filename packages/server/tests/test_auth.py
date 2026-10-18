@@ -15,7 +15,7 @@ from everrec_server.main import create_app
 from everrec_server.settings import Settings
 
 
-def _app(tmp_path):
+def _app(tmp_path, **kw):
     settings = Settings(
         database_url=f"sqlite:///{tmp_path}/t.db",
         recordings_dir=tmp_path / "recordings",
@@ -23,6 +23,7 @@ def _app(tmp_path):
         retention_seconds=3600,
         admin_password="test",
         secret_key="test-secret",
+        **kw,
     )
     return create_app(settings), settings
 
@@ -56,6 +57,18 @@ def test_reads_public_writes_require_login(tmp_path):
         assert c.put("/api/v1/settings/global", json={"quality": "lean"}).status_code == 401
         # 登录接口本身不需要登录
         assert c.post("/api/v1/login", json={"password": "wrong"}).status_code == 401
+
+
+def test_readonly_api_token_reads_but_cannot_write(tmp_path):
+    """EVERREC_API_TOKEN：其他系统查询用，能读，任何写操作一律 403。"""
+    app, _ = _app(tmp_path, api_token="ro-token")
+    with TestClient(app) as c:
+        hdr = {"Authorization": "Bearer ro-token"}
+        assert c.get("/api/v1/devices", headers=hdr).status_code == 200
+        assert c.put("/api/v1/settings/global", json={"quality": "lean"},
+                     headers=hdr).status_code == 403
+        # 没登录也没带令牌，仍是 401（和"只读"区分开）
+        assert c.put("/api/v1/settings/global", json={"quality": "lean"}).status_code == 401
 
 
 def test_auth_status_reports_login_state(tmp_path):
