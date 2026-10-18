@@ -17,7 +17,7 @@ def test_needs_setup_when_no_file_or_no_location(tmp_path):
 
 def test_apply_settings_writes_and_keeps_other_values(tmp_path):
     path = tmp_path / "config" / "everrec.yaml"
-    apply_settings(path, {"state": "HD", "number": "012", "quality": "saver", "autostart": False,
+    apply_settings(path, {"dept": "HD", "number": "012", "quality": "saver", "autostart": False,
                           "server": " http://10.0.0.1:8080 ", "folder": "D:/rec"})
     cfg = load_config(path)
     assert cfg.code == "HD-012"
@@ -35,3 +35,17 @@ def test_bad_value_falls_back_with_warning(tmp_path):
     warnings = apply_settings(path, {"number": "中文编号"})
     assert warnings  # 位置只能英文数字，写错的项回默认值并提示
     assert load_config(path).code == "UNASSIGNED"
+
+
+def test_apply_settings_saves_screenshot_switch(tmp_path):
+    """定时截屏的开关和间隔写进配置文件的 screenshot 段，其他设置不受影响。"""
+    path = tmp_path / "config" / "everrec.yaml"
+    apply_settings(path, {"number": "012", "screenshot_enabled": True,
+                          "screenshot_interval_seconds": 600})
+    cfg = load_config(path)
+    assert cfg.screenshot.enabled is True
+    assert cfg.screenshot.interval_seconds == 600
+    apply_settings(path, {"screenshot_enabled": False})  # 只关开关，间隔保留
+    cfg = load_config(path)
+    assert cfg.screenshot.enabled is False and cfg.screenshot.interval_seconds == 600
+    assert cfg.code == "012"

@@ -9,9 +9,7 @@ dependencies = [
 ]
 
 [project.scripts]
-everrec-client = "everrec_desktop.client:main"
-everrec-tray = "everrec_desktop.tray:main"
-everrec-repair = "everrec_desktop.repair_tool:main"
+everrec-desktop = "everrec_desktop.launcher:main"
 
 [build-system]
 requires = ["hatchling"]
