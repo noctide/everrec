@@ -23,31 +23,30 @@ Windows 实机验证与试点验收（WP11）待做，见[验收清单](docs/acc
 - [现场验收清单](docs/acceptance.md)：装好之后照着做的逐项 PowerShell 步骤和记录表。
 - [设计文档 V0.3（精简版）](docs/design.md)：需求、架构、采集端、存储与上传、状态监控、推送与 API、视频修复、数据模型、容量规划、部署与分期计划。
 
-## 界面设计稿
+## 界面截图（0.2.0 预览版）
 
-管理网站 4 页（首页 / 设备墙 / 录像回放 / 设置），桌面端 3 个窗口，配色为黑白灰。可交互的网页版在 [`design/html`](design/html)：下载仓库后用浏览器打开 `design/html/index.html` 即可，页面上的按钮和筛选能点击，数据均为示例。
-
-> 设计稿是改版前画的：现在的首页只放编号和状态（不放画面），画面统一去设备墙看。
+下面是 0.2.0 真实跑起来的界面（本机 Windows + 服务端 + 12 台模拟设备，画面是 FFmpeg 测试图案）。
+改版前的设计稿在 [`design/screenshots`](design/screenshots)，可交互的网页版在 [`design/html`](design/html)。
 
 ### 管理网站
 
-| 设备墙 | 录像回放 |
+| 首页：一屏看全部电脑，只放编号和状态 | 设备墙：逐台看画面和日志 |
 | --- | --- |
-| ![设备墙](design/screenshots/01-device-wall.png) | ![录像回放](design/screenshots/02-playback.png) |
+| ![首页](docs/images/app/home.png) | ![设备墙](docs/images/app/device-wall.png) |
 
-| 设置 |
-| --- |
-| ![设置](design/screenshots/03-settings.png) |
+| 录像回放：时间轴、缺口、分段下载 | 设置：画质、录制存储、更新、组织树与责任人 |
+| --- | --- |
+| ![录像回放](docs/images/app/playback.png) | ![设置](docs/images/app/settings.png) |
 
 ### 桌面端
 
-| 录像客户端 | 离线时 | 设置（点左上角图标进入） |
-| --- | --- | --- |
-| ![录像客户端](design/screenshots/04-client.png) | ![离线](design/screenshots/05-client-offline.png) | ![客户端设置](design/screenshots/06-client-settings.png) |
+| 录像客户端（正在录像、已连接） | 连不上服务器时：本机独立录，联网后补传 |
+| --- | --- |
+| ![录像客户端](docs/images/app/client.png) | ![离线](docs/images/app/client-offline.png) |
 
-| 修复工具 | 修复结果 | 托盘状态窗 |
-| --- | --- | --- |
-| ![修复工具](design/screenshots/07-repair-tool.png) | ![修复结果](design/screenshots/08-repair-tool-result.png) | ![托盘](design/screenshots/09-tray.png) |
+| 客户端设置（点右上角"设置"进入） | 修复工具 |
+| --- | --- |
+| ![客户端设置](docs/images/app/client-settings.png) | ![修复工具](docs/images/app/repair-tool.png) |
 
 ## 目录结构
 
