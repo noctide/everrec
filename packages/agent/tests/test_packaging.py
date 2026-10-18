@@ -47,3 +47,20 @@ def test_build_outputs_match_what_installer_copies():
     for name in ("everrec-agent", "everrec-desktop", "everrec-screen"):
         assert f'Name = "{name}"' in build, f"build.ps1 没有打包 {name}"
         assert "{#DistDir}\\" + name + "\\*" in iss, f"安装包没有拷贝 {name}"
+
+
+def test_build_uses_project_venv_python():
+    """CI 里 pyinstaller 装在 .venv，直接叫 python 会用到 runner 的系统解释器。"""
+    build = BUILD.read_text(encoding="utf-8")
+    assert r".venv\Scripts\python.exe" in build
+    assert "@pyArgs" in build, "PyInstaller 调用没走参数数组（参数里有逗号/空格会散架）"
+
+
+def test_only_desktop_bundles_qt():
+    """Agent 和录屏进程都不 import PySide6，不该把 Qt 收进包里（每个包白多一百多 MB）。"""
+    build = BUILD.read_text(encoding="utf-8")
+    entries = [line for line in build.splitlines() if line.strip().startswith("@{ Name =")]
+    assert len(entries) == 3, "程序清单应该是三个"
+    for line in entries:
+        expected = "Qt = $true" if "everrec-desktop" in line else "Qt = $false"
+        assert expected in line, f"Qt 收集标志不对：{line.strip()}"
