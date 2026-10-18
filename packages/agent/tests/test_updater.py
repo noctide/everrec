@@ -111,6 +111,65 @@ def test_run_update_installs_with_fake_runner(server):
     assert calls and calls[0][0].endswith(".exe") and "/VERYSILENT" in calls[0]
 
 
+def test_check_tolerates_unknown_fields(server):
+    """服务端以后加字段，老版本 Agent 不能因为多一个键就整条解析失败。"""
+    _Handler.plan = {"update_available": True, "should_update": True,
+                     "latest_version": "9.9.9", "update_mode": "auto",
+                     "sha256": "", "size": 0, "download_url": "/package", "notes": None,
+                     "some_future_field": 42}
+    plan = updater.check(server, "012", "tok", "0.0.1")
+    assert plan is not None and plan.update_available is True
+
+
+def test_run_update_waits_while_desktop_in_use(server):
+    """有人在用桌面（没锁屏 / 刚锁屏不满 10 分钟）：只记日志，不下载不安装。"""
+    _Handler.plan = {"update_available": True, "should_update": False,
+                     "waiting_for_idle": True, "latest_version": "9.9.9",
+                     "update_mode": "auto", "sha256": "", "size": 0,
+                     "download_url": "/package", "notes": None}
+    action = updater.run_update(server, "012", "tok", "0.0.1",
+                                runner=lambda *a, **k: (_ for _ in ()).throw(AssertionError("不该安装")))
+    assert action == "waiting-for-idle"
+
+
+def test_run_update_aborts_when_files_cannot_be_released(server):
+    """腾不出被占用的文件就别拉起安装器，否则装到一半失败更糟。"""
+    data = b"installer"
+    _Handler.payload = data
+    _Handler.plan = {"update_available": True, "should_update": True,
+                     "latest_version": "9.9.9", "update_mode": "auto",
+                     "sha256": hashlib.sha256(data).hexdigest(), "size": len(data),
+                     "download_url": "/package", "notes": None}
+    calls: list[list[str]] = []
+
+    def fake_runner(cmd, **kw):
+        calls.append(cmd)
+        return object()
+
+    action = updater.run_update(server, "012", "tok", "0.0.1",
+                                runner=fake_runner, before_install=lambda: False)
+    assert action == "busy" and calls == []
+
+
+def test_run_update_releases_files_before_installing(server):
+    """顺序要对：先收掉占着 exe 的进程，再拉起安装器。"""
+    data = b"installer"
+    _Handler.payload = data
+    _Handler.plan = {"update_available": True, "should_update": True,
+                     "latest_version": "9.9.9", "update_mode": "auto",
+                     "sha256": hashlib.sha256(data).hexdigest(), "size": len(data),
+                     "download_url": "/package", "notes": None}
+    steps: list[str] = []
+
+    def fake_runner(cmd, **kw):
+        steps.append("install")
+        return object()
+
+    action = updater.run_update(server, "012", "tok", "0.0.1", runner=fake_runner,
+                                before_install=lambda: steps.append("release") or True)
+    assert action == "installed" and steps == ["release", "install"]
+
+
 def test_run_update_no_update(server):
     _Handler.plan = {"update_available": False, "should_update": False,
                      "latest_version": "0.0.1", "update_mode": "auto",

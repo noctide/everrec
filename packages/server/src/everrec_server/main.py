@@ -920,11 +920,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/agent/v1/version-check")
     def agent_version_check(code: str, version: str, request: Request, s: Session = Depends(get_db)):
-        """Agent 检查更新。服务端判断是否该更新：最新版本 + auto 模式 + 在时段内 + 没人登录。
+        """Agent 检查更新。服务端判断是否该更新：最新版本 + auto 模式 + 在时段内 + 没人用桌面。
 
-        有人登录时不更新：安装器要替换托盘和录屏进程的 exe，它们正跑在登录会话里，文件被占用换不掉。
+        没人用桌面 = 没有登录会话，或者登录着但都锁屏超过 10 分钟（Agent 算好放在心跳的
+        `desktop_idle` 里）。有人用的时候不装：安装器要替换托盘和录屏进程的 exe，
+        它们正跑在登录会话里，文件被占用换不掉。
         """
-        _require_agent(s, request, code)
+        agent = _require_agent(s, request, code)
         latest = s.scalars(select(Release).order_by(Release.created_at.desc())).first()
         if latest is None:
             return {"latest_version": None, "update_available": False, "should_update": False}
@@ -935,14 +937,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         end = int(cfg.get("update_window_end", 4))
         hour = datetime.now(UTC).hour
         in_window = (start <= hour < end) if start <= end else (hour >= start or hour < end)
-        agent = s.scalar(select(Agent).where(Agent.code == code))
-        logged_in = int((agent.last_payload or {}).get("logged_in_users", 0)) if agent else 0
-        should_update = update_available and mode == "auto" and in_window and logged_in == 0
+        # 老版本 Agent 不报这个字段：默认 False，按"有人在用"处理，先手动装一次才能自动更新
+        idle = bool((agent.last_payload or {}).get("desktop_idle"))
+        should_update = update_available and mode == "auto" and in_window and idle
         return {
             "latest_version": latest.version,
             "update_available": update_available,
             "should_update": should_update,
-            "waiting_for_logout": bool(update_available and mode == "auto" and in_window and logged_in),
+            "waiting_for_idle": bool(update_available and mode == "auto" and in_window and not idle),
             "update_mode": mode,
             "sha256": latest.sha256,
             "size": latest.size,
