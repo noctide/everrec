@@ -317,7 +317,7 @@ def needs_setup(config_path: Path) -> bool:
 def apply_settings(config_path: Path, values: dict) -> list[str]:
     """把设置写进配置文件，返回给人看的提示（写错的项回到默认值）。
 
-    values 的键：dept/section/area/site/spot/number、server、quality、folder、autostart、
+    values 的键：dept/section/area/site/spot/number、server、camera_type、quality、folder、autostart、
     screenshot_enabled、screenshot_interval_seconds。
     文件不存在就新建；没有写入权限时抛 OSError，由界面提示。
     """
@@ -335,6 +335,9 @@ def apply_settings(config_path: Path, values: dict) -> list[str]:
             loc[k] = str(values[k]).strip()
     if "server" in values:
         data["server"] = str(values["server"]).strip()
+    cam = data.setdefault("camera", {})
+    if values.get("camera_type"):
+        cam["type"] = str(values["camera_type"])  # usb / screen（录屏，tasks.md WP12）
     rec = data.setdefault("recording", {})
     if "quality" in values:
         rec["quality"] = values["quality"]

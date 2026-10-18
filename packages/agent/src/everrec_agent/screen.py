@@ -128,12 +128,41 @@ class ScreenMonitor:
 
 
 class ScreenSession:
-    """登录会话里跑的录屏进程本体。"""
+    """登录会话里跑的录屏进程本体。
 
-    def __init__(self, cfg: AgentConfig, poll_seconds: float = POLL_SECONDS):
+    常驻不退出：配置里切成"录摄像头"时它就待着不动（状态文件写 running=false），
+    切回"录屏幕"不用重新登录就能接着录——界面上改完设置马上生效。
+    """
+
+    def __init__(self, cfg: AgentConfig, config_path: Path | None = None,
+                 poll_seconds: float = POLL_SECONDS):
         self.cfg = cfg
+        self.config_path = config_path
         self.poll_seconds = poll_seconds
         self.recorder = Recorder(cfg)
+
+    @property
+    def wanted(self) -> bool:
+        """配置里要不要录屏。"""
+        return self.cfg.camera.type is CameraType.SCREEN
+
+    def reload_config(self) -> None:
+        """重读配置文件：录屏开关或录制参数变了就换一套（界面改完不用重新登录）。"""
+        if self.config_path is None or not self.config_path.exists():
+            return
+        try:
+            new = load_config(self.config_path)
+        except Exception:  # 配置写坏了：沿用旧的，别停录
+            log.warning("重读配置失败，沿用上一次的设置", exc_info=True)
+            return
+        if new.camera.type is not self.cfg.camera.type or new.recording != self.cfg.recording:
+            was_running = self.recorder.running
+            self.recorder.stop()
+            self.cfg = new
+            self.recorder = Recorder(new)
+            log.info("配置变了：%s", "开始录屏" if self.wanted else "不再是录屏，停止")
+            if was_running and self.wanted:
+                self.recorder.start()
 
     def run(self) -> None:
         log.info("录屏进程启动，位置编号 %s，录像目录 %s", self.cfg.code, self.cfg.recordings_dir)
@@ -142,6 +171,12 @@ class ScreenSession:
         try:
             while True:
                 time.sleep(self.poll_seconds)
+                self.reload_config()
+                if not self.wanted:
+                    if self.recorder.running:
+                        self.recorder.stop()
+                    write_state(self.cfg.state_dir, running=False, locked=is_locked())
+                    continue
                 now_locked = is_locked()
                 if now_locked != locked:
                     locked = now_locked
@@ -158,7 +193,7 @@ class ScreenSession:
             log.info("录屏进程已退出")
 
     def _apply(self, locked: bool) -> None:
-        if locked:
+        if locked or not self.wanted:
             self.recorder.stop()
         elif not self.recorder.running:
             self.recorder.start()
@@ -175,13 +210,12 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     install_dir = Path(args.install_dir) if args.install_dir else Path(sys.executable).parent
     logs.setup_logging(install_dir / "logs")
-    cfg = load_config(install_dir / "config" / "everrec.yaml")
-    if cfg.camera.type is not CameraType.SCREEN:
-        log.info("配置里不是录屏（camera.type=%s），本进程不做事", cfg.camera.type)
-        return 0
+    config_path = install_dir / "config" / "everrec.yaml"
+    cfg = load_config(config_path)
+    log.info("录屏进程启动（camera.type=%s）", cfg.camera.type)
     try:
         with SingleInstance(cfg.state_dir, name="EverRecScreen", file_name="screen.lock"):
-            return ScreenSession(cfg).run() or 0
+            return ScreenSession(cfg, config_path).run() or 0
     except AlreadyRunning:
         log.warning("已有别的会话在录屏，本会话退出（多用户同时登录时只让第一个会话录）")
         return 0

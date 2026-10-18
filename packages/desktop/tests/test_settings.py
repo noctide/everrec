@@ -37,6 +37,17 @@ def test_bad_value_falls_back_with_warning(tmp_path):
     assert load_config(path).code == "UNASSIGNED"
 
 
+def test_apply_settings_saves_screen_source(tmp_path):
+    """录制画面能切成录屏，切回来也不丢其他设置（tasks.md WP12）。"""
+    path = tmp_path / "config" / "everrec.yaml"
+    apply_settings(path, {"number": "012", "camera_type": "screen"})
+    cfg = load_config(path)
+    assert cfg.camera.type.value == "screen"
+    apply_settings(path, {"camera_type": "usb"})  # 只切来源，位置编号还在
+    cfg = load_config(path)
+    assert cfg.camera.type.value == "usb" and cfg.code == "012"
+
+
 def test_apply_settings_saves_screenshot_switch(tmp_path):
     """定时截屏的开关和间隔写进配置文件的 screenshot 段，其他设置不受影响。"""
     path = tmp_path / "config" / "everrec.yaml"
