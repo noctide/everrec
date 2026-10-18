@@ -13,16 +13,16 @@ import {
 import DeviceDrawer from "./DeviceDrawer";
 import { ago, errMsg } from "./labels";
 
-// 首页：左侧组织树 + 状态条 + 等大格子监控墙。
-// 1. 一屏看全，不滚动；格子顺序固定按编号，刷新不跳位（格子等于物理位置）。
+// 首页：左侧组织树 + 状态条 + 等大格子状态墙。不放画面预览——看画面去设备墙，两边不重复。
+// 1. 一屏看全，不滚动（35 台也要放完）；格子顺序固定按编号，刷新不跳位（格子等于物理位置）。
 // 2. 状态靠 8px 点、徽标和 1px 边框区分，颜色只出现在这上面。
-// 3. 点任意一格打开详情抽屉，要逐台查画面和日志去设备墙。
+// 3. 点任意一格打开详情抽屉；要看画面和日志去设备墙。
 const REFRESH_MS = 10_000;
 const UNASSIGNED = -1; // “未归位”：旧版客户端还没报上位置的电脑
 
 type Filter = "all" | "ok" | "offline_local" | "problems";
 
-// 格子上左上角那块小徽标：正常不显示，出问题才标
+// 格子右上角那块小徽标：正常不显示，出问题才标
 const FLAG: Record<Status, string> = {
   ok: "",
   offline_local: "离线本地录制",
@@ -45,12 +45,6 @@ function shortWhy(d: Device): string {
 
 function clock(d: Date): string {
   return d.toLocaleTimeString("zh-CN", { hour12: false });
-}
-
-function shotTime(at: string | null): string {
-  if (!at) return "";
-  const t = new Date(at);
-  return Number.isNaN(t.getTime()) ? "" : t.toLocaleTimeString("zh-CN", { hour12: false });
 }
 
 const label = (n: OrgNode) => n.name || n.code;
@@ -388,27 +382,12 @@ export default function Board() {
                 onClick={() => setDetail(d)}
                 title={`${d.code}  ${shortWhy(d)}`}
               >
-                <span className="frame">
-                  {d.has_thumbnail ? (
-                    <img
-                      src={`/api/v1/devices/${d.id}/snapshot?t=${encodeURIComponent(d.thumbnail_at ?? "")}`}
-                      alt={`${d.code} 最后画面`}
-                      loading="lazy"
-                      onError={(e) => { e.currentTarget.style.display = "none"; }}
-                    />
-                  ) : (
-                    <span className="noimg">暂无画面</span>
-                  )}
-                  {FLAG[d.status] && <span className={`flag ${d.status}`}>{FLAG[d.status]}</span>}
-                  {d.thumbnail_at && <span className="osd">{shotTime(d.thumbnail_at)}</span>}
-                </span>
-                <span className="cell-foot">
+                <span className="cell-head">
+                  <span className={`dot ${d.status}`} />
                   <span className="cell-code">{d.code}</span>
-                  <span className={`cell-meta ${d.status}`}>
-                    <span className={`dot ${d.status}`} />
-                    <span>{shortWhy(d)}</span>
-                  </span>
+                  {FLAG[d.status] && <span className={`cell-flag ${d.status}`}>{FLAG[d.status]}</span>}
                 </span>
+                <span className={`cell-meta ${d.status}`}>{shortWhy(d)}</span>
               </button>
             ))}
           </div>
