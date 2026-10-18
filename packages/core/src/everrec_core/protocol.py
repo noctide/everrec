@@ -46,6 +46,8 @@ class Heartbeat(BaseModel):
     problems: list[str] = []
     # 不算异常、但确实没画面的原因（录屏时锁屏 / 没人登录）。有值时服务端不判异常（WP12）
     paused: str = ""
+    # 当前有几个交互登录会话（任务管理器"用户"标签那种）。自动更新只在没人登录时做（WP9）
+    logged_in_users: int = 0
     restarts: int = 0
     pending_sync: int = 0
     disk_used: float = 0

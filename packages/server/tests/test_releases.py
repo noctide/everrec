@@ -27,12 +27,20 @@ def _login(c: TestClient) -> None:
     assert c.post("/api/v1/login", json={"password": "test"}).status_code == 200
 
 
-def _register(c: TestClient, code: str = "HD-A-012") -> str:
+def _register(c: TestClient, code: str = "HD-A-012", **kw) -> str:
     r = c.post("/agent/v1/heartbeat", json=Heartbeat(
         code=code, hostname="PC-01", agent_version="0.1.0", sent_at=datetime.now(UTC),
-        recording=True, profile="720P / 10 帧", checks=Checks(),
+        recording=True, profile="720P / 10 帧", checks=Checks(), **kw,
     ).model_dump(mode="json"))
     return r.json()["token"]
+
+
+def _hb(c: TestClient, token: str, **kw):
+    """带设备令牌的后续心跳。"""
+    return c.post("/agent/v1/heartbeat", json=Heartbeat(
+        code="HD-A-012", hostname="PC-01", agent_version="0.1.0", sent_at=datetime.now(UTC),
+        recording=True, profile="720P / 10 帧", checks=Checks(), **kw,
+    ).model_dump(mode="json"), headers={"X-Agent-Token": token})
 
 
 def _upload(c: TestClient, version: str, data: bytes = b"setup-exe-bytes"):
@@ -141,6 +149,30 @@ def test_notify_mode_reports_available_but_not_update(tmp_path):
                    headers={"X-Agent-Token": token}).json()
         assert vc["update_available"] is True
         assert vc["should_update"] is False, "只提醒模式不该让 Agent 立即安装"
+
+
+def test_update_waits_until_nobody_logged_in(tmp_path):
+    """有登录会话时不更新：托盘和录屏进程的 exe 正被占用，安装器换不掉（tasks.md WP9）。"""
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _login(c)
+        token = _register(c, logged_in_users=1)
+        _upload(c, "9.9.9")
+        h = datetime.now(UTC).hour
+        c.put("/api/v1/settings/global",
+              json={"update_mode": "auto", "update_window_start": h,
+                    "update_window_end": (h + 1) % 24})
+        body = {"code": "HD-A-012", "version": "0.1.0"}
+        vc = c.get("/agent/v1/version-check", params=body,
+                   headers={"X-Agent-Token": token}).json()
+        assert vc["update_available"] is True
+        assert vc["should_update"] is False and vc["waiting_for_logout"] is True
+
+        # 用户都注销了：服务端放行，Agent 可以装
+        _hb(c, token, logged_in_users=0)
+        vc = c.get("/agent/v1/version-check", params=body,
+                   headers={"X-Agent-Token": token}).json()
+        assert vc["should_update"] is True and vc["waiting_for_logout"] is False
 
 
 def test_update_settings_reject_invalid(tmp_path):
