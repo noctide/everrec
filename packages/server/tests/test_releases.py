@@ -98,7 +98,7 @@ def test_agent_version_check_and_download(tmp_path):
     app = _app(tmp_path)
     with TestClient(app) as c:
         _login(c)
-        token = _register(c)
+        token = _register(c, desktop_idle=True)  # 没人用桌面，服务端才放行
         data = b"installer-payload"
         _upload(c, "2.0.0", data)
         # 把更新时段设为覆盖当前小时，auto 模式下 should_update 才为真
@@ -151,12 +151,12 @@ def test_notify_mode_reports_available_but_not_update(tmp_path):
         assert vc["should_update"] is False, "只提醒模式不该让 Agent 立即安装"
 
 
-def test_update_waits_until_nobody_logged_in(tmp_path):
-    """有登录会话时不更新：托盘和录屏进程的 exe 正被占用，安装器换不掉（tasks.md WP9）。"""
+def test_update_waits_until_desktop_idle(tmp_path):
+    """有人在用桌面时不更新：托盘和录屏进程的 exe 正被占用，安装器换不掉（tasks.md WP9）。"""
     app = _app(tmp_path)
     with TestClient(app) as c:
         _login(c)
-        token = _register(c, logged_in_users=1)
+        token = _register(c, logged_in_users=1, desktop_idle=False)
         _upload(c, "9.9.9")
         h = datetime.now(UTC).hour
         c.put("/api/v1/settings/global",
@@ -166,13 +166,31 @@ def test_update_waits_until_nobody_logged_in(tmp_path):
         vc = c.get("/agent/v1/version-check", params=body,
                    headers={"X-Agent-Token": token}).json()
         assert vc["update_available"] is True
-        assert vc["should_update"] is False and vc["waiting_for_logout"] is True
+        assert vc["should_update"] is False and vc["waiting_for_idle"] is True
 
-        # 用户都注销了：服务端放行，Agent 可以装
-        _hb(c, token, logged_in_users=0)
+        # 登录着但已经锁屏 10 分钟以上（Agent 报 desktop_idle）：服务端放行
+        _hb(c, token, logged_in_users=1, desktop_idle=True)
         vc = c.get("/agent/v1/version-check", params=body,
                    headers={"X-Agent-Token": token}).json()
-        assert vc["should_update"] is True and vc["waiting_for_logout"] is False
+        assert vc["should_update"] is True and vc["waiting_for_idle"] is False
+
+
+def test_update_blocked_when_agent_does_not_report_idle(tmp_path):
+    """老版本 Agent 心跳里没有 desktop_idle：默认按"有人在用"处理，不放行。"""
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _login(c)
+        token = _register(c)  # 不报 desktop_idle
+        _upload(c, "9.9.9")
+        h = datetime.now(UTC).hour
+        c.put("/api/v1/settings/global",
+              json={"update_mode": "auto", "update_window_start": h,
+                    "update_window_end": (h + 1) % 24})
+        vc = c.get("/agent/v1/version-check",
+                   params={"code": "HD-A-012", "version": "0.1.0"},
+                   headers={"X-Agent-Token": token}).json()
+        assert vc["update_available"] is True
+        assert vc["should_update"] is False and vc["waiting_for_idle"] is True
 
 
 def test_update_settings_reject_invalid(tmp_path):

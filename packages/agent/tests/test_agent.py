@@ -62,6 +62,56 @@ def test_counts_logged_in_sessions(monkeypatch):
     assert count_logged_in_users() == 1, "查不到时宁可当成有人登录，别把正在用的程序换坏"
 
 
+def test_desktop_idle_waits_ten_minutes_after_lock(cfg, monkeypatch):
+    """只锁屏不注销的机器也要能自动更新，但要锁够 10 分钟才算"没人用"（tasks.md WP9）。"""
+    from everrec_agent import sessions
+
+    agent = Agent(cfg)
+    monkeypatch.setattr(sessions, "desktop_in_use", lambda: True)
+    agent._last_idle_check = 0.0
+    agent._refresh_desktop_idle()
+    assert agent._desktop_idle_since is None
+    assert agent.desktop_idle is False, "有人在用，不能换程序"
+
+    monkeypatch.setattr(sessions, "desktop_in_use", lambda: False)
+    agent._last_idle_check = 0.0
+    agent._refresh_desktop_idle()
+    assert agent._desktop_idle_since is not None
+    assert agent.desktop_idle is False, "刚锁上，还不到 10 分钟"
+
+    monkeypatch.setattr(sessions, "idle_long_enough", lambda since, now: True)
+    assert agent.desktop_idle is True
+
+
+def test_desktop_unknown_state_is_not_idle(cfg, monkeypatch):
+    """探测失败（Linux、查不到、旧系统）按有人在用处理，不更新。"""
+    from everrec_agent import sessions
+
+    agent = Agent(cfg)
+    monkeypatch.setattr(sessions, "desktop_in_use", lambda: None)
+    agent._last_idle_check = 0.0
+    agent._refresh_desktop_idle()
+    monkeypatch.setattr(sessions, "idle_long_enough", lambda since, now: True)
+    assert agent._desktop_idle_since is None
+
+
+def test_screen_mode_updates_only_without_logged_in_users(cfg, monkeypatch):
+    """录屏机不参与锁屏口径：录屏进程装完不会自己回来（下次登录才起），所以还是没人登录才更新。"""
+    import psutil
+
+    from everrec_agent import sessions
+
+    cfg.camera = Camera(type=CameraType.SCREEN)
+    agent = Agent(cfg)
+    agent._desktop_idle_since = 0.0
+    monkeypatch.setattr(sessions, "idle_long_enough", lambda since, now: True)  # 锁再久也不放行
+    monkeypatch.setattr(psutil, "users",
+                        lambda: [type("U", (), {"terminal": "console", "name": "leo"})()])
+    assert agent.desktop_idle is False
+    monkeypatch.setattr(psutil, "users", lambda: [])
+    assert agent.desktop_idle is True
+
+
 def test_records_offline_and_archives(cfg):
     cfg.server = "http://127.0.0.1:9"  # 没人监听：模拟服务器不可用
     agent = Agent(cfg)

@@ -29,7 +29,7 @@ from everrec_core.health import Check, GrowthWatcher, storage_check
 from everrec_core.protocol import Checks, Heartbeat, HeartbeatReply
 from everrec_core.segments import archive_segment, enforce_quota, list_spool
 
-from . import __version__, child_guard, updater
+from . import __version__, child_guard, sessions, updater
 from .index import IndexEntry, SegmentIndex
 from .logs import RecentProblems
 from .recorder import Recorder
@@ -40,13 +40,14 @@ log = logging.getLogger("agent")
 
 TICK_SECONDS = 2
 UPDATE_CHECK_SECONDS = 3600  # 每小时问一次服务器是否该更新；真正装不装由服务端按时段判定
+IDLE_CHECK_SECONDS = 10  # 多久探一次"有没有人在用桌面"（自动更新判断用）
 
 
 def count_logged_in_users() -> int:
     """当前有几个交互登录会话。
 
-    自动更新要替换托盘和录屏进程的 exe，它们跑在登录会话里、会被文件占用，所以服务端只在
-    这个数为 0 时才让 Agent 装。psutil.users() 在 Windows 上列的是 WTS 会话，服务自己不算一个。
+    psutil.users() 在 Windows 上列的是 WTS 会话，服务自己不算一个。录屏模式的机器仍然用它判断
+    （见 `Agent.desktop_idle`），其余情况看 `sessions.desktop_in_use()` 的锁屏口径。
     """
     try:
         import psutil
@@ -78,6 +79,10 @@ class Agent:
         self._hb_thread: threading.Thread | None = None
         self._last_update_check = 0.0
         self._update_thread: threading.Thread | None = None
+        # 桌面空闲计时（WP9）：从什么时候开始没人用桌面，用来判断现在能不能换程序
+        self._desktop_in_use: bool | None = None
+        self._desktop_idle_since: float | None = None
+        self._last_idle_check = 0.0
 
         self._last_thumb = 0.0
         self._thumb_thread: threading.Thread | None = None
@@ -247,6 +252,7 @@ class Agent:
             problems=self.problems,
             paused=self.paused,
             logged_in_users=count_logged_in_users(),
+            desktop_idle=self.desktop_idle,
             restarts=self.recorder.restarts,
             pending_sync=self.index.pending_count(),
             disk_used=round(self.disk_used, 3),
@@ -440,6 +446,7 @@ class Agent:
             problems=self.problems,
             paused=self.paused,
             logged_in_users=count_logged_in_users(),
+            desktop_idle=self.desktop_idle,
             restarts=self.recorder.restarts,
             pending_sync=self.index.pending_count(),
             disk_used=round(self.disk_used, 3),
@@ -498,6 +505,42 @@ class Agent:
         self._hb_thread = threading.Thread(target=self.send_heartbeat, daemon=True)
         self._hb_thread.start()
 
+    def _refresh_desktop_idle(self) -> None:
+        """探"有没有人在用桌面"，记下从什么时候开始没人用（自动更新判断用，WP9）。"""
+        now = time.monotonic()
+        if now - self._last_idle_check < IDLE_CHECK_SECONDS:
+            return
+        self._last_idle_check = now
+        self._desktop_in_use = sessions.desktop_in_use()
+        if self._desktop_in_use is False:
+            self._desktop_idle_since = self._desktop_idle_since or now
+        else:
+            self._desktop_idle_since = None  # 有人在用 / 说不清：重新计时
+
+    @property
+    def desktop_idle(self) -> bool:
+        """现在能不能换程序（服务端据此放行自动更新，WP9）。
+
+        摄像头机：没人登录，或者登录着但全部锁屏超过 `IDLE_LOCK_SECONDS`，都算没人用桌面。
+        录屏机不参与锁屏口径：录屏进程在登录会话里常驻、锁屏时也在，装完不会自己回来
+        （要等下次登录由启动项拉起），所以仍然只在没人登录时更新。
+        """
+        if self._screen:
+            return count_logged_in_users() == 0
+        return sessions.idle_long_enough(self._desktop_idle_since, time.monotonic())
+
+    def _end_session_processes(self) -> bool:
+        """安装前收掉登录会话里的托盘和录屏进程：它们占着 exe，不收掉安装器换不了文件。
+
+        摄像头录制在服务里，不受影响；这两个程序下次登录由启动项拉起来。
+        没退干净返回 False，放弃本次更新。只在 Windows 上真有事做（Linux 上返回 True）。
+        """
+        if not sessions.end_processes():
+            log.warning("托盘/录屏进程没退干净，这次先不装，等下一轮再试")
+            return False
+        log.info("登录会话里的程序已退出，开始安装新版本")
+        return True
+
     def maybe_update(self) -> None:
         """后台检查更新（WP9）。装不装由服务端按时段判定；这里只拉起后台线程，不阻塞录制。"""
         if not self.cfg.server or not self.agent_token:
@@ -512,7 +555,8 @@ class Agent:
 
     def _run_update(self) -> None:
         try:
-            action = updater.run_update(self.cfg.server, self.cfg.code, self.agent_token, __version__)
+            action = updater.run_update(self.cfg.server, self.cfg.code, self.agent_token, __version__,
+                                        before_install=self._end_session_processes)
             if action == "installed":
                 log.info("已安装新版本，安装器将接管并重启服务")
             elif action == "notify":
@@ -549,6 +593,7 @@ class Agent:
 
     def tick(self) -> None:
         self._check_config_change()  # 检测本地配置文件改动（WP8）
+        self._refresh_desktop_idle()  # 自动更新判断"有没有人在用桌面"（WP9）
         self.run_checks()
         archived = self.archive_finished()
         # 分段边界：应用本地配置文件改动 + 服务端下发配置（WP8 + WP4；画质类以服务端为准）
