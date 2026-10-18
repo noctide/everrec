@@ -88,6 +88,7 @@ class Recording(BaseModel):
 
 class AgentConfig(BaseModel):
     server: str = Field(default="", description="服务器或子公司中转节点地址；留空则纯本地运行")
+    api_token: str = Field(default="", description="桌面端看板读服务器的只读令牌，不参与录制")
     location: Location = Location()
     camera: Camera = Camera()
     recording: Recording = Recording()

@@ -6,6 +6,7 @@ import argparse
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QPushButton,
@@ -23,10 +25,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from everrec_core.config import load_config
+from everrec_core.config import load_config, save_config, validate_tolerant
 
 from .common import (
     COLORS,
+    LIGHT_COLORS,
+    LIGHT_TEXT,
+    Board,
+    build_board,
     build_timeline,
     friendly_level,
     read_logs,
@@ -70,6 +76,55 @@ class TimelineWidget(QWidget):
         p.end()
 
 
+class BoardPage(QWidget):
+    """首页：看板大屏，只看红绿灯。有服务器显示全部电脑，没有就只显示本机。"""
+
+    COLUMNS = 6
+
+    def __init__(self):
+        super().__init__()
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(22, 16, 22, 16)
+        lay.setSpacing(14)
+        self.counts = QLabel("")
+        self.counts.setStyleSheet("font-size: 22px; font-weight: 600;")
+        lay.addWidget(self.counts)
+        self.hint = QLabel("")
+        self.hint.setStyleSheet(f"color: {COLORS['muted']};")
+        lay.addWidget(self.hint)
+        self.grid_box = QWidget()
+        self.grid = QGridLayout(self.grid_box)
+        self.grid.setSpacing(12)
+        lay.addWidget(self.grid_box)
+        lay.addStretch(1)
+
+    def show_board(self, board: Board) -> None:
+        c = board.counts()
+        if board.source == "server":
+            self.counts.setText(
+                f"正常 {c['green']}    离线本地录制 {c['yellow']}    需要处理 {c['red']}")
+        else:
+            self.counts.setText(f"本机：{LIGHT_TEXT[board.tiles[0].light]}")
+        self.hint.setText(board.hint or (
+            "数据来自服务器" if board.source == "server" else "未连接服务器，只显示本机"))
+        while self.grid.count():
+            item = self.grid.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        # 红灯排前面，一眼看到要处理的
+        order = {"red": 0, "yellow": 1, "green": 2}
+        for i, t in enumerate(sorted(board.tiles, key=lambda t: (order[t.light], t.code))):
+            tile = QLabel(f"●\n{t.code}\n{LIGHT_TEXT[t.light]}")
+            tile.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            tile.setToolTip(t.note or LIGHT_TEXT[t.light])
+            tile.setMinimumHeight(110)
+            tile.setStyleSheet(
+                f"border: 1px solid {COLORS['line']}; border-radius: 8px; font-size: 13px; "
+                f"color: {LIGHT_COLORS[t.light]}; font-weight: 600;"
+            )
+            self.grid.addWidget(tile, i // self.COLUMNS, i % self.COLUMNS)
+
+
 class ClientWindow(QWidget):
     def __init__(self, install_dir: Path):
         super().__init__()
@@ -91,6 +146,10 @@ class ClientWindow(QWidget):
         self.menu_btn = QPushButton("EverRec")
         self.menu_btn.clicked.connect(self._toggle_settings)
         bar.addWidget(self.menu_btn)
+        for label, idx in (("看板", 0), ("本机详情", 1)):
+            nav = QPushButton(label)
+            nav.clicked.connect(lambda _c=False, i=idx: self._show_page(i))
+            bar.addWidget(nav)
         self.code_label = QLabel("")
         self.code_label.setStyleSheet("font-family: Consolas, monospace; color: #666;")
         bar.addWidget(self.code_label)
@@ -107,13 +166,21 @@ class ClientWindow(QWidget):
 
         self.stack = QStackedWidget()
         root.addWidget(self.stack)
+        self.board_page = BoardPage()
+        self._board_result: Board | None = None
+        self._board_busy = False
+        self.stack.addWidget(self.board_page)
         self.stack.addWidget(self._build_main())
         self.stack.addWidget(self._build_settings())
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)
         self.timer.start(2000)
+        self.board_timer = QTimer(self)
+        self.board_timer.timeout.connect(self._refresh_board)
+        self.board_timer.start(10000)
         self.refresh()
+        self._refresh_board()
 
     # ---------- 主界面 ----------
 
@@ -246,11 +313,28 @@ class ClientWindow(QWidget):
         self.settings_box.setStyleSheet(f"border: 1px solid {COLORS['line']}; border-radius: 6px;")
         lay.addWidget(self.settings_box)
 
+        form = QGridLayout()
+        self.server_edit = QLineEdit()
+        self.server_edit.setPlaceholderText("留空 = 不连服务器，只看本机")
+        self.token_edit = QLineEdit()
+        self.token_edit.setPlaceholderText("看板读服务器用的只读令牌（可留空）")
+        form.addWidget(QLabel("服务器地址"), 0, 0)
+        form.addWidget(self.server_edit, 0, 1)
+        form.addWidget(QLabel("访问令牌"), 1, 0)
+        form.addWidget(self.token_edit, 1, 1)
+        lay.addLayout(form)
+        save = QPushButton("保存")
+        save.clicked.connect(self._save_settings)
+        lay.addWidget(save)
+        self.save_msg = QLabel("")
+        self.save_msg.setStyleSheet(f"color: {COLORS['muted']};")
+        lay.addWidget(self.save_msg)
+
         open_cfg = QPushButton("用记事本打开配置文件")
         open_cfg.clicked.connect(self._open_config)
         lay.addWidget(open_cfg)
 
-        lay.addWidget(QLabel("当前设置仅供查看，修改配置文件需要管理员权限。"))
+        lay.addWidget(QLabel("也可以直接改配置文件；改动在录像下一段开始时生效。"))
         return w
 
     # ---------- 逻辑 ----------
@@ -266,12 +350,46 @@ class ClientWindow(QWidget):
             )
         self.refresh()
 
-    def _toggle_settings(self) -> None:
-        idx = 1 if self.stack.currentIndex() == 0 else 0
+    def _show_page(self, idx: int) -> None:
         self.stack.setCurrentIndex(idx)
-        self.menu_btn.setText("EverRec" if idx == 0 else "返回")
-        if idx == 1:
+        self.menu_btn.setText("返回" if idx == 2 else "EverRec")
+        if idx == 2:
             self._render_settings()
+
+    def _toggle_settings(self) -> None:
+        self._show_page(0 if self.stack.currentIndex() == 2 else 2)
+
+    def _save_settings(self) -> None:
+        """直接写配置文件（不需要管理员登录；文件没有写权限时给出人话提示）。"""
+        try:
+            cfg = load_config(self.config_path)
+            data = cfg.model_dump(
+                mode="json", exclude={"install_dir", "config_warnings", "config_path"})
+            data["server"] = self.server_edit.text().strip()
+            data["api_token"] = self.token_edit.text().strip()
+            new_cfg, _warnings = validate_tolerant(data)
+            save_config(new_cfg, self.config_path)
+        except OSError:
+            self.save_msg.setText("保存失败：当前账号没有改这个配置文件的权限，可以用管理员身份直接改文件")
+            return
+        self.save_msg.setText("已保存")
+        self._refresh_board()
+
+    def _refresh_board(self) -> None:
+        """看板数据在后台线程取，服务器慢或不通都不卡界面。"""
+        if self._board_busy:
+            return
+        cfg = load_config(self.config_path) if self.config_path.exists() else None
+        server, token = (cfg.server, cfg.api_token) if cfg else ("", "")
+        self._board_busy = True
+
+        def work() -> None:
+            try:
+                self._board_result = build_board(server, token, self.state_dir)
+            finally:
+                self._board_busy = False
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _render_settings(self) -> None:
         cfg = load_config(self.config_path) if self.config_path.exists() else None
@@ -281,7 +399,6 @@ class ClientWindow(QWidget):
                 item.widget().deleteLater()
         rows = [
             ("位置编号", cfg.code if cfg else "—"),
-            ("服务器地址", cfg.server if cfg else "—"),
             ("画质", cfg.recording.encoding.label if cfg else "—"),
             ("录像文件夹", str(cfg.recordings_dir if cfg else "—")),
             ("本地空间上限", f"{cfg.recording.local_quota_gb:g} GB" if cfg else "—"),
@@ -294,8 +411,15 @@ class ClientWindow(QWidget):
             vv.setStyleSheet("font-family: Consolas, monospace;")
             self.settings_grid.addWidget(kk, r, 0)
             self.settings_grid.addWidget(vv, r, 1)
+        if cfg:
+            self.server_edit.setText(cfg.server)
+            self.token_edit.setText(cfg.api_token)
+        self.save_msg.setText("")
 
     def refresh(self) -> None:
+        if self._board_result is not None:
+            self.board_page.show_board(self._board_result)
+            self._board_result = None
         st = read_status(self.state_dir)
         self.code_label.setText(st.get("code", ""))
 

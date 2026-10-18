@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+import urllib.error
+import urllib.request
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -141,3 +144,88 @@ def collect_files(paths: list[Path]) -> list[Path]:
         elif p.is_dir():
             out.extend(f for f in p.rglob("*") if f.is_file() and f.suffix.lower() in VIDEO_EXTS)
     return out
+
+
+# ---------- 看板（首页）：只看红绿灯 ----------
+
+# 看板上唯一用颜色的地方（其余界面仍是黑白灰）；每个灯同时带文字，不只靠颜色区分
+LIGHT_COLORS = {"green": "#2E9E4F", "yellow": "#E0A100", "red": "#D13438"}
+LIGHT_TEXT = {"green": "正常", "yellow": "离线本地录制", "red": "需要处理"}
+_SERVER_STATUS_LIGHT = {"ok": "green", "offline_local": "yellow", "abnormal": "red", "lost": "red"}
+
+
+def light_from_server_status(status: str) -> str:
+    """服务器的设备状态 → 灯色；不认识的状态按红灯，宁可多看一眼。"""
+    return _SERVER_STATUS_LIGHT.get(status, "red")
+
+
+def local_light(st: dict) -> str:
+    """本机 status.json → 灯色，规则与服务端 device_status 一致（没有服务器时用）。"""
+    if not st or st.get("stale"):
+        return "red"
+    checks = st.get("checks", {}) or {}
+    if st.get("starting") and "fail" not in checks.values():
+        return "green"
+    if not st.get("recording") or "fail" in checks.values():
+        return "red"
+    if st.get("offline_since"):
+        return "yellow"
+    return "green"
+
+
+@dataclass(frozen=True)
+class Tile:
+    code: str
+    light: str
+    note: str = ""
+
+
+@dataclass
+class Board:
+    source: str  # "server"=服务器上全部电脑；"local"=只有本机
+    tiles: list[Tile] = field(default_factory=list)
+    hint: str = ""  # 给人看的提示，例如「服务器连不上，当前只显示本机」
+
+    def counts(self) -> dict[str, int]:
+        out = {"green": 0, "yellow": 0, "red": 0}
+        for t in self.tiles:
+            out[t.light] += 1
+        return out
+
+
+def fetch_devices(server: str, token: str, timeout: float = 4) -> list[dict]:
+    """GET {server}/api/v1/devices，带只读令牌；失败抛 RuntimeError（消息是给人看的）。"""
+    req = urllib.request.Request(server.rstrip("/") + "/api/v1/devices")
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+            return json.loads(resp.read().decode("utf-8"))["items"]
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise RuntimeError("服务器不认这个访问令牌，请在设置里检查") from e
+        raise RuntimeError(f"服务器返回了错误（{e.code}）") from e
+    except (urllib.error.URLError, OSError, ValueError, KeyError) as e:
+        raise RuntimeError("连不上服务器") from e
+
+
+def local_board(state_dir: Path, hint: str = "") -> Board:
+    st = read_status(state_dir)
+    code = st.get("code") or "本机"
+    return Board("local", [Tile(code, local_light(st))], hint)
+
+
+def build_board(
+    server: str, token: str, state_dir: Path,
+    fetch: Callable[[str, str], list[dict]] = fetch_devices,
+) -> Board:
+    """数据默认取自服务器；没配服务器就只看本机；配了但连不上也退回本机并说明原因。"""
+    if not server:
+        return local_board(state_dir)
+    try:
+        items = fetch(server, token)
+    except RuntimeError as e:
+        return local_board(state_dir, f"{e}，当前只显示本机")
+    tiles = [Tile(d.get("code", "?"), light_from_server_status(d.get("status", "")),
+                  "；".join(d.get("problems", []) or [])) for d in items]
+    return Board("server", tiles)
