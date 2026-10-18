@@ -93,6 +93,8 @@ powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1 -FfmpegDir 
 iscc packaging\windows\everrec.iss
 ```
 
+安装包输出到仓库根的 `Output\EverRecSetup-x.y.z.exe`（CI 上传的就是这个路径）。
+
 安装包默认装 `D:\EverRec`，没有 D 盘退 `C:\EverRec` 并把本地配额调小；升级和卸载保留 `recordings`、`config`、`logs`。静默安装：`EverRecSetup-x.y.z.exe /VERYSILENT /SERVER=https://服务器 /LOCATION=012`。
 
 **许可注意**：安装包里的 FFmpeg 带 libx264，适用 GPL。公司内部使用没有问题；若以后对外分发，需按 GPL 处理或改用其他编码器（见设计文档第 12 节）。

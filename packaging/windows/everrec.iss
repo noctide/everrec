@@ -22,6 +22,9 @@ AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 DefaultDirName=D:\EverRec
 DisableProgramGroupPage=yes
+; 安装包输出到仓库根目录的 Output\（相对本脚本所在目录）。CI 最后一步上传的是 Output/*.exe，
+; Inno 默认会输出到 packaging\windows\Output\，对不上就"找不到文件"（打第一个 tag 时就是这么挂的）。
+OutputDir=..\..\Output
 OutputBaseFilename=EverRecSetup-{#MyAppVersion}
 Compression=lzma2/max
 SolidCompression=yes
