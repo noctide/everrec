@@ -65,8 +65,9 @@ try {
 }
 
 # ---- 3. 权限 ----
-# 配置文件：管理员和 SYSTEM 可写，普通用户只读——客户端和录屏进程都以登录用户身份读它，
-# 只给管理员和 SYSTEM 的话，客户端会读不到配置、录屏进程也起不来。
+# 配置文件：登录用户也可改（2026-10 Leo 定）——客户端保存设置是直接写文件，不做 UAC 提权；
+# 只给管理员的话，普通账号（甚至未提权的管理员）点保存会失败。
+# 代价：能登录这台电脑的人都能改服务器地址/画质/位置，第一版接受。
 $cfg = Join-Path $InstallDir "config\everrec.yaml"
 try {
     if (Test-Path $cfg) {
@@ -75,13 +76,13 @@ try {
         foreach ($spec in @(
             @("BUILTIN\Administrators", "FullControl"),
             @("NT AUTHORITY\SYSTEM", "FullControl"),
-            @("BUILTIN\Users", "Read")
+            @("BUILTIN\Users", "Modify")
         )) {
             $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($spec[0], $spec[1], "Allow")
             $acl.SetAccessRule($rule)
         }
         Set-Acl -Path $cfg -AclObject $acl
-        Write-Log "已设配置文件权限：管理员与 SYSTEM 可写，其他用户只读"
+        Write-Log "已设配置文件权限：管理员/SYSTEM 全控，登录用户可改（客户端保存设置用）"
     } else {
         Write-Log "配置文件尚不存在，跳过配置权限（服务首次启动会生成）"
     }
