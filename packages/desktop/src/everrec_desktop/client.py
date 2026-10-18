@@ -12,9 +12,12 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
+    QComboBox,
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QPushButton,
@@ -24,11 +27,15 @@ from PySide6.QtWidgets import (
 )
 
 from everrec_core.config import load_config
+from everrec_core.profiles import quality_table
 
 from .common import (
     COLORS,
+    SETTING_KEYS,
+    apply_settings,
     build_timeline,
     friendly_level,
+    needs_setup,
     read_logs,
     read_status,
 )
@@ -114,6 +121,8 @@ class ClientWindow(QWidget):
         self.timer.timeout.connect(self.refresh)
         self.timer.start(2000)
         self.refresh()
+        if needs_setup(self.config_path):  # 还没配置：默认先打开设置界面
+            self._toggle_settings()
 
     # ---------- 主界面 ----------
 
@@ -239,18 +248,53 @@ class ClientWindow(QWidget):
         back.addStretch(1)
         lay.addLayout(back)
 
-        self.settings_box = QWidget()
-        self.settings_grid = QGridLayout(self.settings_box)
-        self.settings_grid.setHorizontalSpacing(14)
-        self.settings_grid.setVerticalSpacing(10)
-        self.settings_box.setStyleSheet(f"border: 1px solid {COLORS['line']}; border-radius: 6px;")
-        lay.addWidget(self.settings_box)
+        form_box = QWidget()
+        form = QGridLayout(form_box)
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(10)
+        form_box.setStyleSheet(f"border: 1px solid {COLORS['line']}; border-radius: 6px;")
+        self.loc_edits: dict[str, QLineEdit] = {}
+        r = 0
+        for key, label in zip(SETTING_KEYS, ("州", "区", "楼栋", "楼层", "编号"), strict=True):
+            self.loc_edits[key] = QLineEdit()
+            self.loc_edits[key].setPlaceholderText("只能用英文和数字")
+            form.addWidget(QLabel(f"位置 · {label}"), r, 0)
+            form.addWidget(self.loc_edits[key], r, 1)
+            r += 1
+        self.server_edit = QLineEdit()
+        self.server_edit.setPlaceholderText("留空 = 不连服务器，本机独立录像")
+        form.addWidget(QLabel("服务器地址"), r, 0)
+        form.addWidget(self.server_edit, r, 1)
+        r += 1
+        self.quality_box = QComboBox()
+        for row in quality_table():
+            star = "（推荐）" if row["recommended"] else ""
+            self.quality_box.addItem(f"{row['label']}{star}", row["quality"])
+        form.addWidget(QLabel("画质"), r, 0)
+        form.addWidget(self.quality_box, r, 1)
+        r += 1
+        self.folder_edit = QLineEdit()
+        form.addWidget(QLabel("录像文件夹"), r, 0)
+        form.addWidget(self.folder_edit, r, 1)
+        r += 1
+        self.autostart_box = QCheckBox("开机自动启动")
+        form.addWidget(self.autostart_box, r, 1)
+        lay.addWidget(form_box)
+
+        save = QPushButton("保存")
+        save.clicked.connect(self._save_settings)
+        lay.addWidget(save)
+        self.save_msg = QLabel("")
+        self.save_msg.setWordWrap(True)
+        self.save_msg.setStyleSheet(f"color: {COLORS['muted']};")
+        lay.addWidget(self.save_msg)
 
         open_cfg = QPushButton("用记事本打开配置文件")
         open_cfg.clicked.connect(self._open_config)
         lay.addWidget(open_cfg)
 
-        lay.addWidget(QLabel("当前设置仅供查看，修改配置文件需要管理员权限。"))
+        lay.addWidget(QLabel("也可以直接改配置文件；改动在录像下一段开始时生效。"))
+        lay.addStretch(1)
         return w
 
     # ---------- 逻辑 ----------
@@ -275,25 +319,26 @@ class ClientWindow(QWidget):
 
     def _render_settings(self) -> None:
         cfg = load_config(self.config_path) if self.config_path.exists() else None
-        while self.settings_grid.count():
-            item = self.settings_grid.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        rows = [
-            ("位置编号", cfg.code if cfg else "—"),
-            ("服务器地址", cfg.server if cfg else "—"),
-            ("画质", cfg.recording.encoding.label if cfg else "—"),
-            ("录像文件夹", str(cfg.recordings_dir if cfg else "—")),
-            ("本地空间上限", f"{cfg.recording.local_quota_gb:g} GB" if cfg else "—"),
-            ("开机自动启动", "开启（系统服务）" if cfg and cfg.autostart else "关闭"),
-        ]
-        for r, (k, v) in enumerate(rows):
-            kk = QLabel(k)
-            kk.setStyleSheet(f"color: {COLORS['muted']};")
-            vv = QLabel(v)
-            vv.setStyleSheet("font-family: Consolas, monospace;")
-            self.settings_grid.addWidget(kk, r, 0)
-            self.settings_grid.addWidget(vv, r, 1)
+        for key in SETTING_KEYS:
+            self.loc_edits[key].setText(getattr(cfg.location, key) if cfg else "")
+        self.server_edit.setText(cfg.server if cfg else "")
+        idx = self.quality_box.findData(cfg.recording.quality.value if cfg else "standard")
+        self.quality_box.setCurrentIndex(max(idx, 0))
+        self.folder_edit.setText(cfg.recording.folder if cfg else "recordings")
+        self.autostart_box.setChecked(cfg.autostart if cfg else True)
+        self.save_msg.setText("还没有配置：请先填写位置编号并保存。" if needs_setup(self.config_path) else "")
+
+    def _save_settings(self) -> None:
+        """直接写配置文件，不需要管理员登录；没有写入权限时给出提示。"""
+        values = {k: e.text() for k, e in self.loc_edits.items()}
+        values.update(server=self.server_edit.text(), quality=self.quality_box.currentData(),
+                      folder=self.folder_edit.text(), autostart=self.autostart_box.isChecked())
+        try:
+            warnings = apply_settings(self.config_path, values)
+        except OSError:
+            self.save_msg.setText("保存失败：当前账号没有改这个配置文件的权限，请换有权限的账号，或直接改文件。")
+            return
+        self.save_msg.setText("已保存。" + ("".join(f" 注意：{w}" for w in warnings)))
 
     def refresh(self) -> None:
         st = read_status(self.state_dir)

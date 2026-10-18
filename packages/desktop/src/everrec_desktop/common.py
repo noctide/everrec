@@ -141,3 +141,52 @@ def collect_files(paths: list[Path]) -> list[Path]:
         elif p.is_dir():
             out.extend(f for f in p.rglob("*") if f.is_file() and f.suffix.lower() in VIDEO_EXTS)
     return out
+
+
+# ---------- 设置：直接改配置文件，不需要管理员登录 ----------
+
+SETTING_KEYS = ("state", "district", "building", "floor", "number")
+
+
+def needs_setup(config_path: Path) -> bool:
+    """还没配置过（没有配置文件，或位置一项都没填）→ 打开客户端时先进设置界面。"""
+    from everrec_core.config import load_config
+
+    if not Path(config_path).exists():
+        return True
+    return load_config(config_path).code == "UNASSIGNED"
+
+
+def apply_settings(config_path: Path, values: dict) -> list[str]:
+    """把设置写进配置文件，返回给人看的提示（写错的项回到默认值）。
+
+    values 的键：state/district/building/floor/number、server、quality、folder、autostart。
+    文件不存在就新建；没有写入权限时抛 OSError，由界面提示。
+    """
+    from everrec_core.config import load_config, save_config, validate_tolerant
+
+    config_path = Path(config_path)
+    cfg = load_config(config_path) if config_path.exists() else None
+    data = (
+        cfg.model_dump(mode="json", exclude={"install_dir", "config_warnings", "config_path"})
+        if cfg else {}
+    )
+    loc = data.setdefault("location", {})
+    for k in SETTING_KEYS:
+        if k in values:
+            loc[k] = str(values[k]).strip()
+    if "server" in values:
+        data["server"] = str(values["server"]).strip()
+    rec = data.setdefault("recording", {})
+    if "quality" in values:
+        rec["quality"] = values["quality"]
+        rec["resolution"] = None  # 选了画质挡就不再沿用高级里的单项覆盖
+        rec["fps"] = None
+    if "folder" in values and str(values["folder"]).strip():
+        rec["folder"] = str(values["folder"]).strip()
+    if "autostart" in values:
+        data["autostart"] = bool(values["autostart"])
+    new_cfg, warnings = validate_tolerant(data)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    save_config(new_cfg, config_path)
+    return warnings

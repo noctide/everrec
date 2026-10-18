@@ -219,3 +219,24 @@ label.check input { height: auto; }
 .device-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--chip); }
 .device-row .mono { flex: 1; }
 .save-bar { display: flex; gap: 10px; align-items: center; position: sticky; bottom: 0; background: var(--bg); padding: 12px 0; }
+
+/* ---- 看板大屏（首页）：全站唯一用颜色的地方，只用在红绿灯上 ---- */
+.board { padding: 24px; }
+.board-sum { display: flex; gap: 48px; align-items: center; margin-bottom: 24px; }
+.board-count { display: flex; align-items: center; gap: 12px; font-size: 20px; color: var(--text-2); }
+.board-count strong { font-size: 44px; color: var(--strong); line-height: 1; }
+.board-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 16px; }
+.board-tile {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 22px 10px; border: 1px solid var(--line); border-radius: 10px;
+}
+.board-code { font-size: 15px; color: var(--strong); }
+.board-text { font-size: 13px; font-weight: 600; }
+.board-text.green { color: #2e7d4a; }
+.board-text.yellow { color: #8a6500; }
+.board-text.red { color: #b3261e; }
+.lamp { display: inline-block; width: 56px; height: 56px; border-radius: 50%; }
+.board-count .lamp { width: 28px; height: 28px; }
+.lamp.green { background: #2e9e4f; box-shadow: 0 0 14px #2e9e4f66; }
+.lamp.yellow { background: #e0a100; box-shadow: 0 0 14px #e0a10066; }
+.lamp.red { background: #d13438; box-shadow: 0 0 14px #d1343888; }
