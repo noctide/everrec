@@ -19,12 +19,15 @@ Windows 实机验证与试点验收（WP11）待做，见[验收清单](docs/acc
 ## 文档
 
 - [开发手册](AGENTS.md)：给接手开发的人和 agent，包括规矩、实测踩过的坑、Windows 验证方式。
-- [剩余工作包](docs/tasks.md)：第一版剩下的工作，拆成可并行的独立任务，各有接口约定和验收标准。
+- [工作包与验收](docs/tasks.md)：第一版各工作包的实现与验收标准（WP1–WP13 已全部实现，只剩 WP11 现场验收）。
+- [现场验收清单](docs/acceptance.md)：装好之后照着做的逐项 PowerShell 步骤和记录表。
 - [设计文档 V0.3（精简版）](docs/design.md)：需求、架构、采集端、存储与上传、状态监控、推送与 API、视频修复、数据模型、容量规划、部署与分期计划。
 
 ## 界面设计稿
 
-管理网站 3 页，桌面端 3 个窗口，配色为黑白灰。可交互的网页版在 [`design/html`](design/html)：下载仓库后用浏览器打开 `design/html/index.html` 即可，页面上的按钮和筛选能点击，数据均为示例。
+管理网站 4 页（首页 / 设备墙 / 录像回放 / 设置），桌面端 3 个窗口，配色为黑白灰。可交互的网页版在 [`design/html`](design/html)：下载仓库后用浏览器打开 `design/html/index.html` 即可，页面上的按钮和筛选能点击，数据均为示例。
+
+> 设计稿是改版前画的：现在的首页只放编号和状态（不放画面），画面统一去设备墙看。
 
 ### 管理网站
 
@@ -50,14 +53,17 @@ Windows 实机验证与试点验收（WP11）待做，见[验收清单](docs/acc
 
 ```
 packages/
-  core/      everrec-core    公共核心库：配置、FFmpeg 录制命令、分段归档、健康检查、1/2 级修复、心跳格式
-  agent/     everrec-agent   采集端：录制、断线照常录、启动时修复中断分段、本地滚动覆盖、心跳
-  server/    everrec-server  服务端：心跳接口、失联判定、事件表、GET /api/v1/devices
-web/                         管理网站（React + TypeScript + Vite）：设备墙、录像回放、设置、登录
-config/everrec.example.yaml  客户端配置示例
+  core/      everrec-core    三端共用：配置、档位、FFmpeg 命令、分段归档、健康检查、修复、心跳格式
+  agent/     everrec-agent   采集端（Windows 服务）：录制、离线照常录、自动修复、上传补传、自动更新、录屏会话进程
+  server/    everrec-server  服务端（FastAPI）：心跳与失联、上传与保留、回放、登录与凭据、推送、缩略图、安装包管理
+  desktop/   everrec-desktop 桌面端（PySide6）：客户端窗口、托盘、修复工具、一键 / 定时截屏
+  relay/     everrec-relay   子公司中转节点：对子公司 Agent 提供同样的接口，向主服务器拉取
+web/                         管理网站（React + TS + Vite）：首页、设备墙、录像回放、设置（含组织树与责任人）
+packaging/windows/           PyInstaller 打包脚本 + Inno Setup 安装包脚本
 deploy/                      WinSW 服务定义（Windows Agent）、systemd 单元（Linux 服务端）
-docs/                        设计文档与架构图
+docs/                        设计文档、工作包与验收清单
 design/                      界面设计稿（源文件、网页版、截图）
+config/everrec.example.yaml  客户端配置示例
 ```
 
 ## 本地跑起来
@@ -79,7 +85,7 @@ uv run everrec-agent run -c ./demo/config/everrec.yaml
 
 开发管理网站时用 `cd web && npm run dev`，`/api` 会自动转发到 8080。
 
-## 打包与安装（Windows）
+## 开发：打包与安装（Windows）
 
 用 PyInstaller 打 3 个 onedir（`everrec-agent`、`everrec-desktop`、`everrec-screen`；客户端、托盘、修复工具是同一个 exe 的三个入口），Inno Setup 打安装包，GitHub Actions（`windows-latest`）在推 `v*` tag 时自动产出。本地在 Windows 上打包：
 
@@ -104,6 +110,23 @@ iscc packaging\windows\everrec.iss
 当前预览版 **0.2.0** 在 GitHub 的 [Releases](https://github.com/noctide/everrec/releases) 里（标着 "Pre-release"），
 下载 `EverRecSetup-0.2.0.exe` 装到现场电脑即可。预览版用于 Windows 现场验收，装之前先看
 [验收清单](docs/acceptance.md)；问题按清单最后一节的方式记下来。
+
+## 安装与使用（现场，Windows）
+
+**要求**：Windows 10 / 11（64 位）。录像占盘按上限约 290 MB/小时估算，默认本地配额 20 GB、保留 90 天。
+
+1. **安装**：右键"以管理员身份运行"`EverRecSetup-0.2.0.exe`（双击也行，会弹 UAC）。
+   默认装到 `D:\EverRec`，没有 D 盘会装到 `C:\EverRec` 并自动把本地配额调小。
+   批量安装用静默参数：`EverRecSetup-0.2.0.exe /VERYSILENT /SERVER=http://服务器:8080 /LOCATION=012`。
+2. **填服务器地址和位置编号**：打开桌面端"录像客户端"→ 设置里填；装了桌面快捷方式的话直接点开。
+   位置编号只能用英文、数字、连字符（会进文件路径）。
+3. **确认在录**：客户端窗口显示"正在录像"、管理网站上出现这台电脑即可。日志在 `D:\EverRec\logs\agent.log`。
+4. **看管理网站**：浏览器打开服务器地址，用管理员密码登录（密码由服务器端 `EVERREC_ADMIN_PASSWORD` 设定）。
+   首页一屏看全部电脑状态，点设备墙看画面和日志，录像回放在"录像回放"页。
+5. **卸载**：设置 → 应用，或控制面板卸载；`recordings` / `config` / `logs` 会保留。
+6. **现场验收**：按[验收清单](docs/acceptance.md)逐项做，结果填第 D 节的表。
+
+> 之前装过 0.1.0 的机器要**手动装一次**这个预览版（旧版不认识新版心跳字段），之后就能自动更新了。
 
 ## 进度
 
