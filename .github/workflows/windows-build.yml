@@ -1,0 +1,69 @@
+# EverRec Windows 打包（tasks.md WP9）
+# 在 windows-latest 上：装依赖 → 下 FFmpeg → PyInstaller 打 4 个程序 → Inno Setup 打安装包 → 上传产物。
+# 触发：打 tag（v*）或手动跑。
+
+name: windows-build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: 装 Python 依赖
+        run: uv sync --all-packages
+
+      - name: 装打包工具
+        run: uv pip install pyinstaller
+
+      # FFmpeg 静态构建（gyan.dev essential build，含 libx264，GPL；公司内部使用无问题，见 README）
+      - name: 下载 FFmpeg
+        shell: pwsh
+        run: |
+          $url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+          Invoke-WebRequest -Uri $url -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg-extract
+          $bin = Get-ChildItem ffmpeg-extract -Directory | Select-Object -First 1
+          New-Item -ItemType Directory -Force -Path third_party\ffmpeg | Out-Null
+          Copy-Item (Join-Path $bin.FullName "bin\ffmpeg.exe")  third_party\ffmpeg
+          Copy-Item (Join-Path $bin.FullName "bin\ffprobe.exe") third_party\ffmpeg
+
+      # WinSW 服务二进制（v2 最后一个 .NET Framework 版，单文件、无需运行时）
+      - name: 下载 WinSW
+        shell: pwsh
+        run: |
+          $url = "https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW-x64.exe"
+          New-Item -ItemType Directory -Force -Path packaging\windows\winsw | Out-Null
+          Invoke-WebRequest -Uri $url -OutFile packaging\windows\winsw\everrec-agent-service.exe
+
+      - name: PyInstaller 打包
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          if (-not $version) { $version = "0.1.0" }
+          & powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1 -FfmpegDir third_party\ffmpeg -Version $version
+
+      # Inno Setup 编译器随 runner 预装（iscc.exe 在 PATH）
+      - name: 编译安装包
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          if (-not $version) { $version = "0.1.0" }
+          iscc packaging\windows\everrec.iss
+
+      - name: 上传安装包
+        uses: actions/upload-artifact@v4
+        with:
+          name: everrec-setup-windows
+          path: Output/*.exe
+          if-no-files-found: error
