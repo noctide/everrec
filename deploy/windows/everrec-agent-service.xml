@@ -1,14 +1,17 @@
 <!--
   WinSW 服务定义（设计文档 4.1、14.1）。
-  把 WinSW-x64.exe 改名为 everrec-agent-service.exe，与本文件放在安装文件夹，然后以管理员运行：
-      everrec-agent-service.exe install
+  文件名必须是 <服务程序名>.xml：安装包里是 everrec-agent-service.exe + 本文件（同为 everrec-agent-service.xml），
+  以管理员运行 `everrec-agent-service.exe install` 才会读到它。
   效果：开机自启、不依赖用户登录、异常退出 10 秒后自动拉起。
+
+  %BASE% 是 WinSW 程序所在目录，也就是安装目录（{app}）。Agent 本体在子目录里：
+  安装包把 PyInstaller 的 onedir 产物放在 {app}\everrec-agent\，所以可执行文件要写全路径。
 -->
 <service>
   <id>EverRecAgent</id>
   <name>EverRec 录制服务</name>
   <description>EverRec（恒录）操作区 24 小时录像</description>
-  <executable>%BASE%\everrec-agent.exe</executable>
+  <executable>%BASE%\everrec-agent\everrec-agent.exe</executable>
   <arguments>run -c "%BASE%\config\everrec.yaml"</arguments>
   <workingdirectory>%BASE%</workingdirectory>
   <startmode>Automatic</startmode>
