@@ -136,6 +136,14 @@ var
   cfg: String;
 begin
   cfg := ExpandConstant('{app}\config\everrec.yaml');
+  if CurStep = ssInstall then
+  begin
+    // 升级：先把服务停掉。正在运行的 everrec-agent.exe 锁着文件，不停的话替换必然失败
+    // （首次安装时服务还不存在，FileExists 挡住）。
+    if FileExists(ExpandConstant('{app}\everrec-agent-service.exe')) then
+      Exec(ExpandConstant('{app}\everrec-agent-service.exe'), 'stop', '',
+           SW_HIDE, ewWaitUntilTerminated, rc);
+  end;
   if CurStep = ssPostInstall then
   begin
     // 首次安装生成默认配置；升级（已有配置）绝不动
