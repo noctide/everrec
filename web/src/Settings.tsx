@@ -1,26 +1,31 @@
 import { useEffect, useState } from "react";
 import {
+  checkAuth,
   deleteDeviceSettings,
   deleteRelease,
   fetchDevices,
   fetchQuality,
   fetchReleases,
   fetchSettings,
+  logout,
   putDeviceSettings,
   putGlobalSettings,
-  putLocationOptions,
   uploadRelease,
   type QualityInfo,
   type Release,
   type SettingsState,
 } from "./api";
+import Login from "./Login";
+import { OrgEditor } from "./OrgEditor";
+import { errMsg } from "./labels";
 
-// 码率自动算的公式见 core/profiles.py（BITS_PER_PIXEL=0.07），这里只为估算代价，不开放码率
-const BITS_PER_PIXEL = 0.07;
+// 分段时长挡位（秒）。默认 1 小时（Leo 定）；只给挡位，不让人手填秒数。
+const SEGMENT_STOPS = [300, 600, 900, 1800, 3600];
+const DEFAULT_SEGMENT_SECONDS = 3600;
 
-function mbPerHour(width: number, height: number, fps: number): number {
-  const kbps = Math.max(32, Math.round((width * height * fps * BITS_PER_PIXEL) / 1000));
-  return (kbps * 3600) / 8 / 1000;
+// 服务器上可能留着挡位外的旧值（早期是任意秒数），把它也列出来，免得下拉显示空白
+function segmentChoices(current: number): number[] {
+  return [...new Set([...SEGMENT_STOPS, current])].sort((a, b) => a - b);
 }
 
 interface QualityValue {
@@ -33,8 +38,7 @@ function resolveEncoding(v: QualityValue, qi: QualityInfo): { res: string; fps: 
   const base = qi.quality.find((q) => q.quality === v.quality) ?? qi.quality[2];
   const res = v.resolution ?? base.resolution;
   const fps = v.fps ?? base.fps;
-  const [w, h] = qi.resolution_sizes[res] ?? [1280, 720];
-  return { res, fps, mbph: mbPerHour(w, h, fps) };
+  return { res, fps, mbph: qi.mb_per_hour[res]?.[String(fps)] ?? 0 };
 }
 
 function QualityEditor({
@@ -144,19 +148,22 @@ export default function Settings() {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
+  // 写操作要登录；读接口公开
+  const [auth, setAuth] = useState<"checking" | "in" | "out">("checking");
+  const [loginOpen, setLoginOpen] = useState(false);
+
   // 全局画质编辑态
   const [quality, setQuality] = useState<QualityValue>({ quality: "", resolution: null, fps: null });
   const [watermark, setWatermark] = useState(true);
   const [retentionDays, setRetentionDays] = useState(90);
   const [rollover, setRollover] = useState(true);
   const [quota, setQuota] = useState(20);
-  const [segment, setSegment] = useState(300);
+  const [segment, setSegment] = useState(DEFAULT_SEGMENT_SECONDS);
   const [updateMode, setUpdateMode] = useState("auto");
   const [winStart, setWinStart] = useState(2);
   const [winEnd, setWinEnd] = useState(4);
 
   // 位置选项编辑态
-  const [locText, setLocText] = useState<Record<string, string>>({});
 
   // 单设备覆盖编辑态
   const [devices, setDevices] = useState<Record<string, Record<string, unknown>>>({});
@@ -189,22 +196,28 @@ export default function Settings() {
       setRetentionDays((g.retention_days as number) ?? 90);
       setRollover((g.rollover_enabled as boolean) ?? true);
       setQuota((g.local_quota_gb as number) ?? 20);
-      setSegment((g.segment_seconds as number) ?? 300);
+      setSegment((g.segment_seconds as number) ?? DEFAULT_SEGMENT_SECONDS);
       setUpdateMode((g.update_mode as string) ?? "auto");
       setWinStart((g.update_window_start as number) ?? 2);
       setWinEnd((g.update_window_end as number) ?? 4);
-      setLocText(Object.fromEntries(
-        Object.entries(s.location_options).map(([k, v]) => [k, v.join(", ")]),
-      ));
       fetchReleases().then(setReleases).catch(() => {}); // 版本列表加载失败不阻塞设置页
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errMsg(e));
     }
   }
 
   useEffect(() => {
     load();
   }, []);
+
+  useEffect(() => {
+    checkAuth().then((ok) => setAuth(ok ? "in" : "out"));
+  }, []);
+
+  async function signOut() {
+    await logout();
+    setAuth("out");
+  }
 
   async function saveGlobal() {
     setError(null);
@@ -226,7 +239,7 @@ export default function Settings() {
       setSaved(true);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errMsg(e));
     }
   }
 
@@ -238,7 +251,7 @@ export default function Settings() {
       setEditDevice(null);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errMsg(e));
     }
   }
 
@@ -256,16 +269,6 @@ export default function Settings() {
     await load();
   }
 
-  async function saveLocations() {
-    setError(null);
-    const data: Record<string, string[]> = {};
-    for (const [k, v] of Object.entries(locText)) {
-      data[k] = v.split(",").map((s) => s.trim()).filter(Boolean);
-    }
-    await putLocationOptions(data);
-    await load();
-  }
-
   async function doUploadRelease() {
     if (!relFile || !relVersion.trim()) return;
     setRelBusy(true);
@@ -279,7 +282,7 @@ export default function Settings() {
       if (input) input.value = "";
       setReleases(await fetchReleases());
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errMsg(e));
     } finally {
       setRelBusy(false);
     }
@@ -291,14 +294,24 @@ export default function Settings() {
       await deleteRelease(id);
       setReleases(await fetchReleases());
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errMsg(e));
     }
   }
 
+  const canEdit = auth === "in";
   const eff = qi ? resolveEncoding(quality, qi) : null;
   const dailyGb = eff ? (deviceCount * eff.mbph * 24) / 1000 : 0;
   const daysLeft = dailyGb > 0 && settings ? settings.disk.free_gb / dailyGb : null;
   const notEnough = daysLeft !== null && daysLeft < retentionDays;
+
+  if (loginOpen) {
+    return (
+      <Login
+        onLogin={() => { setAuth("in"); setLoginOpen(false); }}
+        onCancel={() => setLoginOpen(false)}
+      />
+    );
+  }
 
   if (!settings || !qi) {
     return (
@@ -313,6 +326,11 @@ export default function Settings() {
       <div className="page-head">
         <h1>设置</h1>
         <span className="muted">配置版本 {settings.config_version}</span>
+        {auth === "in" ? (
+          <button type="button" className="btn" onClick={signOut}>退出登录</button>
+        ) : (
+          <button type="button" className="btn" title="改配置、上传安装包等需要管理员登录" onClick={() => setLoginOpen(true)}>登录</button>
+        )}
       </div>
 
       {error && (
@@ -341,8 +359,18 @@ export default function Settings() {
         </div>
         <div className="field-row">
           <label>本地配额（GB）<input type="number" value={quota} onChange={(e) => setQuota(Number(e.target.value))} /></label>
-          <label>分段时长（秒）<input type="number" value={segment} onChange={(e) => setSegment(Number(e.target.value))} /></label>
+          <label>分段时长
+            <select value={segment} onChange={(e) => setSegment(Number(e.target.value))}>
+              {segmentChoices(segment).map((s) => (
+                <option key={s} value={s}>{s % 60 === 0 ? `${s / 60} 分钟` : `${s} 秒`}</option>
+              ))}
+            </select>
+          </label>
         </div>
+        <p className="muted">
+          分段越长，文件越少、索引越轻；但最新一段要录完才上传，回放最新画面最多晚一个分段时长
+          （现在 {Math.round(segment / 60)} 分钟）。断电最多损失正在录的那一段。
+        </p>
         <div className="field-row">
           <label>保留天数<input type="number" value={retentionDays} onChange={(e) => setRetentionDays(Number(e.target.value))} /></label>
           <label className="check"><input type="checkbox" checked={rollover} onChange={(e) => setRollover(e.target.checked)} /> 滚动覆盖（关闭后不再自动删除旧录像）</label>
@@ -363,18 +391,7 @@ export default function Settings() {
         </div>
       </section>
 
-      <section className="card-block">
-        <h2>位置选项</h2>
-        <p className="muted">桌面端设置里按这里维护的州 / 区 / 楼栋 / 楼层下拉选择。</p>
-        {["state", "district", "building", "floor"].map((level) => (
-          <div className="field" key={level}>
-            <label>
-              {level === "state" ? "州" : level === "district" ? "区" : level === "building" ? "楼栋" : "楼层"}
-              <input value={locText[level] ?? ""} onChange={(e) => setLocText({ ...locText, [level]: e.target.value })} placeholder="逗号分隔" />
-            </label>
-          </div>
-        ))}
-      </section>
+      <OrgEditor disabled={!canEdit} />
 
       <section className="card-block">
         <h2>单独设置的电脑</h2>
@@ -384,15 +401,15 @@ export default function Settings() {
             <div className="device-row" key={code}>
               <span className="mono">{code}</span>
               <span className="muted">{(data.quality as string) ?? "（跟随全局）"}</span>
-              <button type="button" className="link" onClick={() => setEditDevice(code)}>编辑</button>
-              <button type="button" className="link" onClick={() => removeDevice(code)}>删除</button>
+              <button type="button" className="link" disabled={!canEdit} onClick={() => setEditDevice(code)}>编辑</button>
+              <button type="button" className="link" disabled={!canEdit} onClick={() => removeDevice(code)}>删除</button>
             </div>
           ))}
           {Object.keys(devices).length === 0 && <p className="muted">还没有单独设置。</p>}
         </div>
         <div className="field-row">
           <input className="mono" placeholder="位置编号，如 HD-A-012" value={newDevice} onChange={(e) => setNewDevice(e.target.value)} />
-          <button type="button" className="primary" onClick={addDevice}>添加</button>
+          <button type="button" className="primary" disabled={!canEdit} onClick={addDevice}>添加</button>
         </div>
       </section>
 
@@ -405,7 +422,7 @@ export default function Settings() {
         <div className="field-row">
           <input className="mono" placeholder="版本号，如 0.2.0" value={relVersion} onChange={(e) => setRelVersion(e.target.value)} />
           <input placeholder="更新说明（可选）" value={relNotes} onChange={(e) => setRelNotes(e.target.value)} />
-          <button type="button" className="primary" disabled={relBusy || !relFile || !relVersion.trim()} onClick={doUploadRelease}>
+          <button type="button" className="primary" disabled={!canEdit || relBusy || !relFile || !relVersion.trim()} onClick={doUploadRelease}>
             {relBusy ? "上传中…" : "上传版本"}
           </button>
         </div>
@@ -416,7 +433,8 @@ export default function Settings() {
               <span className="muted">{(r.size / 1024 / 1024).toFixed(1)} MB</span>
               <span className="muted">{r.notes ?? ""}</span>
               <span className="muted">{new Date(r.created_at).toLocaleString()}</span>
-              <button type="button" className="link" onClick={() => doDeleteRelease(r.id)}>删除</button>
+              <a className="link" href={`/api/v1/releases/${r.id}/download`}>下载</a>
+              <button type="button" className="link" disabled={!canEdit} onClick={() => doDeleteRelease(r.id)}>删除</button>
             </div>
           ))}
           {releases.length === 0 && <p className="muted">还没有上传任何版本。</p>}
@@ -424,8 +442,7 @@ export default function Settings() {
       </section>
 
       <div className="save-bar">
-        <button type="button" className="primary" onClick={saveGlobal}>保存全局设置</button>
-        <button type="button" className="btn" onClick={saveLocations}>保存位置选项</button>
+        <button type="button" className="primary" disabled={!canEdit} onClick={saveGlobal}>保存全局设置</button>
       </div>
 
       {editDevice && (

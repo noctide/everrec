@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>方案 B · 看板（高密度巡视图表）— EverRec</title>
+<link rel="stylesheet" href="mock.css">
+</head>
+<body>
+
+<div class="mockbar">
+  <b>看板改版候选稿</b><span>方案 B · 高密度巡视图表</span>
+  <a href="board-a-wall.html">A 画面墙</a>
+  <a href="board-b-table.html" class="on">B 巡视图表</a>
+  <a href="index.html">两版取舍</a>
+  <span class="sp">示例数据 · 1920 宽下一屏 35 行，异常排最前</span>
+</div>
+
+<header class="topbar">
+  <div class="brand">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+      <circle cx="12" cy="12" r="9"></circle><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"></circle>
+    </svg>
+    EverRec <span class="dim">恒录</span>
+  </div>
+  <nav class="nav" aria-label="主导航">
+    <a href="board-b-table.html" class="on">看板</a>
+    <a href="#">设备墙</a>
+    <a href="#">录像回放</a>
+    <a href="#">设置</a>
+  </nav>
+  <div class="top-right">
+    <span>管理员 · 王建国</span>
+    <button class="btn">退出</button>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="rail">
+    <input class="rail-search" type="search" placeholder="搜索部门、位置、编号…" aria-label="搜索组织">
+    <div class="tree">
+      <button class="tree-row d1 on"><span class="tw"></span><span class="dot bad"></span><span class="nm">全部</span><span class="ct alert">3/35</span></button>
+
+      <button class="tree-row d1"><span class="tw">▾</span><span class="dot bad"></span><span class="nm">财务部</span><span class="ct alert">2/18</span></button>
+      <button class="tree-row d2"><span class="tw">▾</span><span class="dot bad"></span><span class="nm">一科</span><span class="ct alert">2/12</span></button>
+      <button class="tree-row d3"><span class="tw"></span><span class="dot bad"></span><span class="nm">东区</span><span class="ct alert">1/8</span></button>
+      <button class="tree-row d3"><span class="tw"></span><span class="dot bad"></span><span class="nm">西区</span><span class="ct alert">1/4</span></button>
+      <button class="tree-row d2"><span class="tw">▸</span><span class="dot ok"></span><span class="nm">二科</span><span class="ct">6</span></button>
+
+      <button class="tree-row d1"><span class="tw">▸</span><span class="dot warn"></span><span class="nm">人事部</span><span class="ct">9</span></button>
+      <button class="tree-row d1"><span class="tw">▸</span><span class="dot bad"></span><span class="nm">运营部</span><span class="ct alert">1/8</span></button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="head">
+      <nav class="crumbs" aria-label="当前位置"><span>全部</span><span class="sep">/</span><b>35 台</b></nav>
+      <span class="role">一眼看出哪些电脑没在正常录像</span>
+      <div class="head-right">
+        <a class="owner" href="#" title="点进设置页的「组织与责任人」"><span class="k">管辖</span><b>全部 35 台</b><span class="from">按部门分管</span></a>
+        <a class="link" href="#">设备墙 · 逐台查画面与日志 →</a>
+      </div>
+    </div>
+
+    <div class="strip">
+      <button class="seg on"><span>全部</span><span class="n">35</span></button>
+      <button class="seg"><span class="dot ok"></span><span>正常</span><span class="n">29</span></button>
+      <button class="seg"><span class="dot warn"></span><span>离线本地</span><span class="n">3</span></button>
+      <button class="seg"><span class="dot bad"></span><span>需要处理</span><span class="n">3</span></button>
+      <div class="strip-right">
+        <span>排序</span>
+        <button class="seg sm on">异常优先</button>
+        <button class="seg sm">按编号</button>
+        <span style="margin-left:4px">14:02:11 更新 · 每 10 秒</span>
+        <button class="btn" aria-label="进入大屏模式">全屏</button>
+      </div>
+    </div>
+
+    <div class="tblwrap">
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th style="width:6.5%">状态</th>
+            <th style="width:13.5%">编号</th>
+            <th style="width:8%">名称</th>
+            <th style="width:9%">位置</th>
+            <th style="width:10%">近 30 分钟</th>
+            <th style="width:15%">说明</th>
+            <th style="width:10%">当前分段</th>
+            <th style="width:7.5%">最后消息</th>
+            <th style="width:5.5%" class="num">待补传</th>
+            <th style="width:6.5%" class="num">磁盘</th>
+            <th style="width:5%">责任人</th>
+            <th style="width:3.5%" class="num">操作</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </main>
+</div>
+
+<script>
+// 与 A 稿同一套示例数据。st: ok / warn（离线本地录制）/ bad（没在录像）/ lost（失联）
+const DEVICES = [
+  ["FIN-AP-E-HQ-F3-012", "3 号收银台", "ok",   "12 秒前", "", 0, "东区 · HQ · F3", "李慧"],
+  ["FIN-AP-E-HQ-F3-015", "4 号收银台", "ok",   "8 秒前",  "", 0, "东区 · HQ · F3", "李慧"],
+  ["FIN-AP-E-HQ-F3-018", "5 号收银台", "warn", "", "连不上服务器，正在本机录制", 46, "东区 · HQ · F3", "李慧"],
+  ["FIN-AP-E-HQ-F3-021", "6 号收银台", "bad",  "", "录像文件 60 秒没有增长，已自动重启 2 次", 0, "东区 · HQ · F3", "李慧"],
+  ["FIN-AP-E-HQ-F3-024", "一科办公室", "ok",   "5 秒前",  "", 0, "东区 · HQ · F3", "李慧"],
+  ["FIN-AP-E-HQ-F3-027", "一科会议桌", "ok",   "9 秒前",  "", 0, "东区 · HQ · F3", "李慧"],
+  ["FIN-AP-E-HQ-F3-030", "一科档案柜", "ok",   "2 秒前",  "", 0, "东区 · HQ · F3", "李慧"],
+  ["FIN-AP-E-HQ-F3-033", "走廊入口",   "ok",   "21 秒前", "", 0, "东区 · HQ · F3", "李慧"],
+  ["FIN-AP-W-HQ-F2-006", "西区收银台", "warn", "", "连不上服务器，正在本机录制", 12, "西区 · HQ · F2", "李慧"],
+  ["FIN-AP-W-HQ-F2-009", "西区办公室", "ok",   "14 秒前", "", 0, "西区 · HQ · F2", "李慧"],
+  ["FIN-AP-W-HQ-F2-012", "西区档案柜", "lost", "", "已经 6 小时没有消息，请去现场看看", 0, "西区 · HQ · F2", "李慧"],
+  ["FIN-AP-W-HQ-F2-015", "西区走廊",   "ok",   "3 秒前",  "", 0, "西区 · HQ · F2", "李慧"],
+
+  ["FIN-CS-E-HQ-F1-004", "二科办公室", "ok",   "17 秒前", "", 0, "东区 · HQ · F1", "王建国"],
+  ["FIN-CS-E-HQ-F1-007", "二科会议桌", "ok",   "6 秒前",  "", 0, "东区 · HQ · F1", "王建国"],
+  ["FIN-CS-E-HQ-F1-010", "二科档案柜", "ok",   "31 秒前", "", 0, "东区 · HQ · F1", "王建国"],
+  ["FIN-CS-W-HQ-F1-003", "二科走廊",   "ok",   "11 秒前", "", 0, "西区 · HQ · F1", "王建国"],
+  ["FIN-CS-W-HQ-F1-006", "备件柜",     "ok",   "26 秒前", "", 0, "西区 · HQ · F1", "王建国"],
+  ["FIN-CS-W-HQ-F1-009", "打印区",     "ok",   "4 秒前",  "", 0, "西区 · HQ · F1", "王建国"],
+
+  ["HR-PY-N-HQ-F5-001", "薪酬办公室", "ok",   "19 秒前", "", 0, "北区 · HQ · F5", "陈晓"],
+  ["HR-PY-N-HQ-F5-004", "薪酬档案柜", "ok",   "7 秒前",  "", 0, "北区 · HQ · F5", "陈晓"],
+  ["HR-PY-S-HQ-F5-007", "薪酬走廊",   "ok",   "23 秒前", "", 0, "南区 · HQ · F5", "陈晓"],
+  ["HR-PY-S-HQ-F5-010", "薪酬会议桌", "ok",   "13 秒前", "", 0, "南区 · HQ · F5", "陈晓"],
+
+  ["HR-RC-N-HQ-F2-002", "招聘面试间", "warn", "", "连不上服务器，正在本机录制", 4, "北区 · HQ · F2", "陈晓"],
+  ["HR-RC-N-HQ-F2-005", "招聘办公室", "ok",   "28 秒前", "", 0, "北区 · HQ · F2", "陈晓"],
+  ["HR-RC-N-HQ-F2-008", "招聘前台",   "ok",   "16 秒前", "", 0, "北区 · HQ · F2", "陈晓"],
+  ["HR-RC-S-HQ-F2-011", "人事走廊",   "ok",   "33 秒前", "", 0, "南区 · HQ · F2", "陈晓"],
+  ["HR-RC-S-HQ-F2-014", "人事会议桌", "ok",   "41 秒前", "", 0, "南区 · HQ · F2", "陈晓"],
+
+  ["OP-EA-N-SH-F1-020", "东区中控台", "ok",   "10 秒前", "", 0, "东区 · SH · F1", "赵雪"],
+  ["OP-EA-N-SH-F1-023", "东区入口",   "ok",   "24 秒前", "", 0, "东区 · SH · F1", "赵雪"],
+  ["OP-EA-S-SH-F2-026", "东区巡检点", "ok",   "15 秒前", "", 0, "东区 · SH · F2", "赵雪"],
+  ["OP-EA-S-SH-F2-029", "东区仓库",   "bad",  "", "摄像头被其他程序占用，录不到画面", 0, "东区 · SH · F2", "赵雪"],
+
+  ["OP-WA-N-SH-F3-031", "西区中控台", "ok",   "18 秒前", "", 0, "西区 · SH · F3", "赵雪"],
+  ["OP-WA-N-SH-F3-034", "西区入口",   "ok",   "29 秒前", "", 0, "西区 · SH · F3", "赵雪"],
+  ["OP-WA-S-SH-F4-037", "西区仓库",   "ok",   "36 秒前", "", 0, "西区 · SH · F4", "赵雪"],
+  ["OP-WA-S-SH-F4-040", "西区巡检点", "ok",   "44 秒前", "", 0, "西区 · SH · F4", "赵雪"]
+];
+
+const LABEL = { ok: "正常", warn: "离线本地", bad: "没在录像", lost: "失联" };
+const rank = { bad: 0, lost: 0, warn: 1, ok: 2 };
+const tone = (st) => (st === "warn" ? "warn" : st === "ok" ? "" : "bad");
+
+// 心跳条：最近 30 分钟，每分钟一格。由编号决定，每次刷新同一台长得一样。
+// 连不上服务器的（离线本地 / 失联）那段时间没有心跳，格子是空的 —— 一段空有多长，就是断了多久。
+function spark(code, st) {
+  const out = [];
+  if (st === "lost") {
+    for (let i = 0; i < 30; i++) out.push("none");
+    return out;
+  }
+  if (st === "warn") {
+    const gap = code.endsWith("018") ? 30 : code.endsWith("006") ? 22 : 12;
+    for (let i = 0; i < 30; i++) out.push(i < 30 - gap ? "ok" : "none");
+    return out;
+  }
+  let h = 7;
+  for (const c of code) h = (h * 31 + c.charCodeAt(0)) % 9973;
+  for (let i = 0; i < 30; i++) {
+    h = (h * 1103515245 + 12345) % 2147483648;
+    const r = h / 2147483648;
+    if (st === "bad" && i >= 24) { out.push(i === 29 ? "bad" : "warn"); continue; }
+    out.push(r > 0.985 ? "none" : r > 0.955 ? "warn" : "ok");
+  }
+  return out;
+}
+
+// 异常优先：严重度 → 编号。同一严重度内顺序固定，刷新不跳位。
+const rows = DEVICES.slice().sort((a, b) => {
+  const d = rank[a[2]] - rank[b[2]];
+  return d !== 0 ? d : a[0].localeCompare(b[0]);
+});
+
+// 磁盘占用：示例值，按编号稳定生成，60~94%
+function disk(code) {
+  let h = 3;
+  for (const c of code) h = (h * 37 + c.charCodeAt(0)) % 9973;
+  return 60 + (h % 35);
+}
+
+document.getElementById("rows").innerHTML = rows.map(([code, name, st, ago, why, pend, loc, who]) => {
+  const t = tone(st);
+  const cls = t === "bad" ? "is-bad" : t === "warn" ? "is-warn" : "";
+  const subCls = t === "bad" ? "tx-bad" : t === "warn" ? "tx-warn" : "tx-mute";
+  const d = disk(code);
+  return `<tr class="${cls}" title="${name}${why ? " · " + why : ""}">
+    <td><span class="st"><span class="dot sm ${t || "ok"}"></span><span class="${t ? subCls : ""}">${LABEL[st]}</span></span></td>
+    <td class="code">${code}</td>
+    <td>${name}</td>
+    <td class="tx-mute">${loc}</td>
+    <td><span class="spark">${spark(code, st).map((s) => `<i class="${s}"></i>`).join("")}</span></td>
+    <td class="${t ? subCls : "tx-mute"}">${why}</td>
+    <td class="tx-mute">${st === "ok" ? "14-15 点" : st === "warn" ? "13-14 点" : "—"}</td>
+    <td class="tx-mute">${ago || "—"}</td>
+    <td class="num ${pend > 0 ? "tx-warn" : "tx-mute"}">${pend > 0 ? pend : "—"}</td>
+    <td class="num ${d >= 90 ? "tx-bad" : d >= 80 ? "tx-warn" : "tx-mute"}">${d}%</td>
+    <td class="who">${who}</td>
+    <td><a class="act" href="#" aria-label="${code} 回放">回放</a></td>
+  </tr>`;
+}).join("");
+</script>
+</body>
+</html>

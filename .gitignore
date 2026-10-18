@@ -14,6 +14,9 @@ web/dist/
 # 本地运行产生的数据
 *.db
 recordings/
+demo/
+demo-server-recordings/
 logs/
 state/
+screenshots/
 config/everrec.yaml

@@ -126,7 +126,6 @@ def test_restart_continues_delivery(tmp_path, webhook):
 
 
 def test_mass_lost_merges_into_one(tmp_path, webhook):
-    settings = _settings(tmp_path, webhook)
     settings = Settings(
         database_url=f"sqlite:///{tmp_path}/t.db", webhook_url=webhook.url,
         lost_after_seconds=0, sweep_seconds=3600,

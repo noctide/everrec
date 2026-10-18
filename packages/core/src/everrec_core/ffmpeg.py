@@ -210,9 +210,10 @@ def build_record_command(cfg: AgentConfig, thumb_fps: str = "1/60") -> list[str]
     out = spool_dir(cfg) / f"{cfg.code}_%Y%m%d_%H%M%S{SEGMENT_EXT}"
     thumb = cfg.state_dir / "thumb.jpg"
     # 一路录像、一路缩略图（设计 6.2）：摄像头只能读一次，用 split 分流。
-    # 录像那一路的参数保持不变；缩略图一路 fps 抽帧、缩到宽 320，持续覆盖同一文件。
+    # 录像那一路的参数保持不变；缩略图一路 fps 抽帧、缩到宽 640，持续覆盖同一文件。
+    # 640 宽：客户端主画面放大显示、保存画面时烧编号+时间水印，320 宽会糊到看不清。
     rec = _video_filter(cfg, p)
-    fc = f"[0:v]split=2[rec][thumb];[rec]{rec}[recv];[thumb]fps={thumb_fps},scale=320:-2[thumbv]"
+    fc = f"[0:v]split=2[rec][thumb];[rec]{rec}[recv];[thumb]fps={thumb_fps},scale=640:-2[thumbv]"
     return [
         ffmpeg_binary(),
         "-hide_banner", "-loglevel", "warning", "-y",

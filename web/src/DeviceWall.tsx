@@ -1,23 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { fetchDevices, type Device, type DevicesResponse, type Status } from "./api";
+import DeviceDrawer from "./DeviceDrawer";
+import { ago, errMsg, STATUS_TEXT } from "./labels";
 
 const REFRESH_MS = 30_000;
-
-const STATUS_TEXT: Record<Status, string> = {
-  ok: "正常录制",
-  offline_local: "离线本地录制",
-  abnormal: "没在录像",
-  lost: "失联",
-};
-
-// 健康检查 ①②③④⑥（设计文档 6.1）
-const CHECK_LABEL: Record<string, string> = {
-  service: "服务",
-  device: "摄像头",
-  process: "录制进程",
-  dataflow: "文件增长",
-  storage: "存储",
-};
 
 const FILTERS:{ id: Status | "all"; label: string }[] = [
   { id: "all", label: "全部" },
@@ -26,12 +12,6 @@ const FILTERS:{ id: Status | "all"; label: string }[] = [
   { id: "abnormal", label: "没在录像" },
   { id: "lost", label: "失联" },
 ];
-
-function ago(sec: number): string {
-  if (sec < 60) return `${sec} 秒前`;
-  if (sec < 3600) return `${Math.floor(sec / 60)} 分钟前`;
-  return `${Math.floor(sec / 3600)} 小时前`;
-}
 
 export default function DeviceWall() {
   const [data, setData] = useState<DevicesResponse | null>(null);
@@ -47,7 +27,7 @@ export default function DeviceWall() {
       setError(null);
       setUpdatedAt(new Date());
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errMsg(e));
     }
   }, [prefix]);
 
@@ -67,7 +47,8 @@ export default function DeviceWall() {
         <div>
           <h1>设备墙</h1>
           <div className="muted">
-            每 30 秒自动刷新{updatedAt && ` · 最后更新 ${updatedAt.toLocaleTimeString("zh-CN", { hour12: false })}`}
+            工作台：逐台看画面、查日志、进回放 · 每 30 秒自动刷新
+            {updatedAt && ` · 最后更新 ${updatedAt.toLocaleTimeString("zh-CN", { hour12: false })}`}
           </div>
         </div>
         <label className="prefix">
@@ -152,41 +133,7 @@ export default function DeviceWall() {
         ))}
       </div>
 
-      {open && (
-        <div className="drawer-backdrop" onClick={() => setOpen(null)}>
-          <aside className="drawer" onClick={(e) => e.stopPropagation()} aria-label={`${open.code} 详情`}>
-            <div className="drawer-head">
-              <h2 className="mono">{open.code}</h2>
-              <button type="button" onClick={() => setOpen(null)} aria-label="关闭">×</button>
-            </div>
-            <dl>
-              <dt>状态</dt><dd>{STATUS_TEXT[open.status]}</dd>
-              <dt>电脑</dt><dd>{open.hostname} · Agent {open.version}</dd>
-              <dt>画质</dt><dd>{open.profile}</dd>
-              <dt>检查</dt>
-              <dd>
-                {Object.entries(open.checks)
-                  .map(([k, v]) => `${CHECK_LABEL[k] ?? k}${v === "ok" ? "正常" : v === "warn" ? "注意" : "异常"}`)
-                  .join(" · ")}
-              </dd>
-              <dt>磁盘</dt><dd>{Math.round(open.disk_used * 100)}%</dd>
-            </dl>
-            <h3>最近日志</h3>
-            {open.recent_logs.length === 0 ? (
-              <p className="muted">没有警告或错误</p>
-            ) : (
-              <ul className="logs mono">
-                {open.recent_logs.slice().reverse().map((l, i) => (
-                  <li key={i}>
-                    <span>{new Date(l.at).toLocaleString("zh-CN", { hour12: false })}</span>{" "}
-                    <b>{l.level}</b> {l.message}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </aside>
-        </div>
-      )}
+      {open && <DeviceDrawer device={open} onClose={() => setOpen(null)} onRevoked={load} />}
     </main>
   );
 }

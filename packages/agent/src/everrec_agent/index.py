@@ -23,6 +23,8 @@ class IndexEntry:
     size: int
     integrity: str
     status: str = "local"
+    # 这一段实际有多长（秒）。桌面端时间轴按它画；旧索引没有这一项，读出来是 0。
+    duration: float = 0.0
 
 
 class SegmentIndex:

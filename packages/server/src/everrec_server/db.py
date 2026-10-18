@@ -111,14 +111,20 @@ class Setting(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
-class LocationOption(Base):
-    """位置选项（州/区/楼栋/楼层），心跳回复给桌面端做下拉（tasks.md WP4）。"""
+class OrgNode(Base):
+    """组织树节点：部门 - 科室 - 区域 - 属地 - 位置（level 1-5）。编号不进树，设备本身是叶子。"""
 
-    __tablename__ = "location_option"
+    __tablename__ = "org_node"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    level: Mapped[str] = mapped_column(String(16), index=True)  # state / district / building / floor
-    value: Mapped[str] = mapped_column(String(64))
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("org_node.id"), nullable=True, index=True)
+    level: Mapped[int] = mapped_column(Integer)  # 1=部门 … 5=位置
+    code: Mapped[str] = mapped_column(String(32))  # 英文数字，进设备编号和文件路径，建好后不改
+    name: Mapped[str] = mapped_column(String(64), default="")  # 中文显示名，可空
+    owner_name: Mapped[str] = mapped_column(String(64), default="")  # 责任人
+    owner_dept: Mapped[str] = mapped_column(String(64), default="")  # 责任部门
+    owner_note: Mapped[str] = mapped_column(String(256), default="")  # 备注（联系方式等）
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class Meta(Base):

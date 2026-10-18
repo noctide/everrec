@@ -57,6 +57,21 @@ def test_upload_list_delete_release(tmp_path):
         assert c.get("/api/v1/releases").json() == []
 
 
+def test_web_download_release(tmp_path):
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _login(c)
+        data = b"installer-bytes"
+        _upload(c, "1.0.0", data)
+        rid = c.get("/api/v1/releases").json()[0]["id"]
+        # 读接口免登录下载，字节一致
+        r = c.get(f"/api/v1/releases/{rid}/download")
+        assert r.status_code == 200 and r.content == data
+        assert "attachment" in r.headers.get("content-disposition", "")
+        # 不存在的版本 404
+        assert c.get("/api/v1/releases/999/download").status_code == 404
+
+
 def test_upload_requires_login(tmp_path):
     app = _app(tmp_path)
     with TestClient(app) as c:

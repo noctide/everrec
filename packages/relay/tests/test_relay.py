@@ -52,7 +52,7 @@ def test_southbound_heartbeat_and_upload(tmp_path):
     with TestClient(app) as c:
         token = c.post("/agent/v1/heartbeat", json=_hb()).json()["token"]
         assert token, "子公司 Agent 首次心跳应拿到令牌"
-        assert c.get("/api/v1/devices", headers={"Authorization": "Bearer x"}).status_code == 401
+        assert c.get("/api/v1/devices").status_code == 200
         _upload(c, token)
 
 

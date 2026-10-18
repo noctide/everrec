@@ -71,6 +71,7 @@ class Settings:
     admin_password: str = field(
         default_factory=lambda: os.environ.get("EVERREC_ADMIN_PASSWORD", "")
     )
+    # 只读 API 令牌：给其他系统查询用，只能读，不能改（EVERREC_API_TOKEN）
     api_token: str = field(
         default_factory=lambda: os.environ.get("EVERREC_API_TOKEN", "")
     )

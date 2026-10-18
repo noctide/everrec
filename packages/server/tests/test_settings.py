@@ -1,4 +1,4 @@
-"""服务端设置：全局 + 设备覆盖、下发到心跳、非法值拒绝、位置选项、画质表。"""
+"""服务端设置：全局 + 设备覆盖、下发到心跳、非法值拒绝、画质表。"""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 
+from everrec_core import profiles
 from everrec_core.protocol import Checks, Heartbeat
 from everrec_server.main import create_app
 from everrec_server.settings import Settings
@@ -89,17 +90,6 @@ def test_retention_not_pushed_to_agent(tmp_path):
         assert reply["settings"]["quality"] == "saver"
 
 
-def test_location_options_roundtrip(tmp_path):
-    app = _app(tmp_path)
-    with TestClient(app) as c:
-        _login(c)
-        loc = {"state": ["HD"], "district": ["PD"], "building": ["A"], "floor": ["3F"]}
-        c.put("/api/v1/location-options", json=loc)
-        reply = c.post("/agent/v1/heartbeat", json=_hb()).json()
-        assert reply["location_options"]["state"] == ["HD"]
-        assert reply["location_options"]["building"] == ["A"]
-
-
 def test_quality_endpoint(tmp_path):
     app = _app(tmp_path)
     with TestClient(app) as c:
@@ -109,6 +99,9 @@ def test_quality_endpoint(tmp_path):
         assert q["resolutions"] == ["360p", "480p", "720p", "1080p"]
         assert q["fps"] == [5, 8, 10, 12, 15]
         assert any(row["recommended"] for row in q["quality"])
+        # 前端查这张表算"每小时多少 MB"，不再自己套码率公式
+        expect = round(profiles.resolve(resolution="720p", fps=10).mb_per_hour_max)
+        assert q["mb_per_hour"]["720p"]["10"] == expect
 
 
 def test_delete_device_override(tmp_path):

@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from everrec_server import config_push
-from everrec_server.db import Agent, Event, LocationOption, Recording, Setting
+from everrec_server.db import Agent, Event, Recording, Setting
 from everrec_server.status import aware, device_status
 
 from .settings import RelaySettings
@@ -63,17 +63,8 @@ def _apply_settings(s: Session, data: dict) -> bool:
 
 
 def _apply_location_options(s: Session, data: dict[str, list[str]]) -> bool:
-    current = config_push.location_options(s)
-    if current == data:
-        return False
-    for row in s.scalars(select(LocationOption)).all():
-        s.delete(row)
-    for level, values in data.items():
-        if level in config_push.LEVELS:
-            for v in values:
-                s.add(LocationOption(level=level, value=v))
-    config_push.bump_config_version(s)
-    return True
+    """旧的平铺位置选项：组织树改版后，中转节点的树由本地设备心跳自动生成，这里只接收、不处理。"""
+    return False
 
 
 def _serialize_devices(s: Session, lost_after: int) -> list[dict]:
@@ -93,6 +84,7 @@ def _serialize_devices(s: Session, lost_after: int) -> list[dict]:
             "pending_sync": p.get("pending_sync", 0), "disk_used": p.get("disk_used", 0),
             "recent_logs": (a.recent_logs or [])[-20:],
             "camera_resolutions": p.get("camera_resolutions", []),
+            "location": p.get("location", {}),
         })
     return out
 

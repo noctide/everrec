@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>看板改版 · 两版候选稿 — EverRec</title>
+<link rel="stylesheet" href="mock.css">
+<style>
+  .doc { max-width: 900px; margin: 0 auto; padding: 32px 24px 64px; }
+  .doc h1 { font-size: 22px; font-weight: 600; color: var(--ink-1); margin: 0 0 6px; }
+  .doc .lede { color: var(--ink-2); margin: 0 0 24px; }
+  .doc h2 { font-size: 15px; font-weight: 600; color: var(--ink-1); margin: 32px 0 10px; }
+  .doc p { margin: 0 0 12px; color: var(--ink-2); }
+  .doc ul { margin: 0 0 12px; padding-left: 20px; color: var(--ink-2); }
+  .doc li { margin-bottom: 6px; }
+  .doc code { font-family: var(--mono); font-size: 12px; background: var(--surface-2); padding: 1px 5px; border-radius: 3px; }
+  .picks { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 18px 0 8px; }
+  .pick {
+    display: block; padding: 16px 18px; background: var(--surface);
+    border: 1px solid var(--line); border-radius: var(--r); color: inherit;
+  }
+  .pick:hover { border-color: var(--line-2); }
+  .pick .tag { display: inline-block; font-size: 11px; font-weight: 600; color: var(--ok); }
+  .pick h3 { margin: 4px 0 6px; font-size: 15px; font-weight: 600; color: var(--ink-1); }
+  .pick p { margin: 0; font-size: 12px; color: var(--ink-3); }
+  table.cmp { width: 100%; border-collapse: collapse; font-size: 13px; margin: 8px 0 4px; }
+  table.cmp th, table.cmp td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  table.cmp th { font-size: 11px; font-weight: 500; color: var(--ink-3); background: var(--canvas); }
+  table.cmp td:first-child { color: var(--ink-3); white-space: nowrap; }
+  .note { border-left: 2px solid var(--warn); background: var(--warn-bg); padding: 10px 12px; font-size: 13px; color: var(--ink-2); border-radius: 0 var(--r-sm) var(--r-sm) 0; }
+  .todo { font-size: 13px; }
+  @media (max-width: 700px) { .picks { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<div class="mockbar">
+  <b>看板改版候选稿</b><span>两版取舍说明</span>
+  <a href="board-a-wall.html">A 画面墙</a>
+  <a href="board-b-table.html">B 巡视图表</a>
+  <a href="index.html" class="on">两版取舍</a>
+  <span class="sp">设计稿 · 未接后端 · 示例数据</span>
+</div>
+
+<div class="doc">
+  <h1>看板改版：两版候选稿</h1>
+  <p class="lede">
+    两版解决的是同一个病：现在的首页把「30px 标题横幅 + 异常横条 + 正常小胶囊」三种粒度混在一起，
+    一屏看不全、看不到画面、状态靠 44px 发光圆点。两版都换成：冷白底、8px 状态点、1px 发丝线、
+    状态色只出现在点和文字上、35 台一屏放完。区别只有「用什么当主角」。
+  </p>
+
+  <div class="picks">
+    <a class="pick" href="board-a-wall.html">
+      <span class="tag">方案 A</span>
+      <h3>等大格子监控墙</h3>
+      <p>主角是最后一帧画面。7 列 × 5 行，1920×1080 一屏放完 35 台；格子顺序固定按编号，刷新不跳位。</p>
+    </a>
+    <a class="pick" href="board-b-table.html">
+      <span class="tag">方案 B</span>
+      <h3>高密度巡视图表</h3>
+      <p>主角是信息密度。一行一台、35 行一屏，带近 30 分钟心跳条、待补传、磁盘、责任人。</p>
+    </a>
+  </div>
+
+  <h2>三处真正的差别</h2>
+  <table class="cmp">
+    <tr><th style="width:96px"></th><th>A · 画面墙</th><th>B · 巡视图表</th></tr>
+    <tr><td>主角</td><td>画面：黑屏、画面歪了、时间戳不动，一眼看出</td><td>数据：谁在补传、谁磁盘要满、谁在管</td></tr>
+    <tr><td>一屏容量</td><td>35 格（一屏放完，还剩空间）</td><td>35 行（一屏放完）</td></tr>
+    <tr><td>排序</td><td>固定按编号 —— 格子等于物理位置，两次抬头还在原处</td><td>异常优先 —— 坏的排最前，同一严重度内按编号</td></tr>
+  </table>
+  <p style="font-size:12px;color:var(--ink-3)">
+    其余全部一样：冷白配色、语义状态色、左侧组织树 + 汇总红绿灯、责任人、10 秒刷新、全屏模式。
+    所以选定一版，另一版不是白做 —— 见下面的建议。
+  </p>
+
+  <h2>我的建议</h2>
+  <ul>
+    <li><b>A 做首页看板</b>：这是摄像头产品，"看得到画面"本身是专业感的一部分；巡视图就该挂在大屏上、不滚动、不跳位。</li>
+    <li><b>B 的形态给设备墙</b>：现在设备墙只有卡片墙，加一个"表格"视图正好补上「排队查数据」的场景，两页分工也就清楚了 —— 看板扫一眼，设备墙坐下查。</li>
+    <li><b>反过来也成立</b>：如果值班的人日常更多是查数据而不是看画面，B 做首页、A 收成"大屏模式"。这两条路我都能落。</li>
+  </ul>
+
+  <h2>落地时的成本</h2>
+  <ul>
+    <li>两版都<b>不需要改后端</b>：缩略图（<code>has_thumbnail</code> + <code>/snapshot</code>）、<code>/org</code> 树与责任人、<code>current_segment</code>、<code>disk_used</code> 这些字段现在已经有了，只是首页没用。</li>
+    <li>要改的是 <code>web/src/styles.css</code>（换 token、删掉光晕和 10px 圆角）和 <code>web/src/Board.tsx</code>（结构重写），<code>DeviceWall.tsx</code> 只在选 B 加表格视图时动。</li>
+    <li>验证：<code>npm run build</code> 通过 + 用示例数据截图对比。</li>
+  </ul>
+
+  <h2>还没定的三件事</h2>
+  <ul class="todo">
+    <li><b>规则冲突</b>：<code>AGENTS.md</code> 和 <code>docs/org-tree-plan.md</code> 第 84 行写的是"只用黑白灰"，你已同意改成"冷白 + 语义状态色"，但我等改代码时一起改文档，避免文档先描述一个还不存在的界面。</li>
+    <li><b>页面数</b>：<code>docs/design.md</code> 第 552 行写着"管理网站只有 3 页"，按你的决定现在是 4 页（看板 / 设备墙 / 录像回放 / 设置），要同步改这一行。</li>
+    <li><b>导航叫什么</b>：稿子里按"看板 + 设备墙"写的。如果你更想保留"首页"，改一个字就行。</li>
+  </ul>
+
+  <h2>如果你说的"看板"是看板列</h2>
+  <p class="note">
+    即按状态分三列（需要处理 / 离线本地 / 正常）。那是另一种东西，我这一版没做，因为这 35 台里 29 台是正常的，
+    会全堆进一列、横向找设备很累。如果你要的就是那个样子，说一声，我按同样配色再出一版给你比。
+  </p>
+</div>
+
+</body>
+</html>

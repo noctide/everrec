@@ -12,7 +12,8 @@ from sqlalchemy.orm import Session
 
 from everrec_core.profiles import FPS_STOPS, Quality, Resolution
 
-from .db import LocationOption, Meta, Setting
+from . import org
+from .db import Meta, Setting
 
 # 允许的服务端设置键（码率不开放，不出现在任何设置里）
 _ALLOWED_KEYS = {
@@ -30,7 +31,6 @@ AGENT_KEYS = {
     "upload_realtime_bps", "upload_backfill_bps",
 }
 
-LEVELS = ("state", "district", "building", "floor")
 
 
 def validate_settings(data: dict) -> dict:
@@ -124,10 +124,5 @@ def bump_config_version(s: Session) -> int:
 
 
 def location_options(s: Session) -> dict[str, list[str]]:
-    """州/区/楼栋/楼层 的可选值，心跳回复给桌面端做下拉。"""
-    rows = s.scalars(select(LocationOption).order_by(LocationOption.level, LocationOption.id)).all()
-    out: dict[str, list[str]] = {level: [] for level in LEVELS}
-    for r in rows:
-        if r.level in out and r.value not in out[r.level]:
-            out[r.level].append(r.value)
-    return out
+    """各层级（部门/科室/区域/属地/位置）已有的可选值，来自组织树。"""
+    return org.flat_options(s)

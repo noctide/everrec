@@ -36,13 +36,13 @@ from sqlalchemy.orm import Session, sessionmaker
 from everrec_core.protocol import Heartbeat, HeartbeatReply
 from everrec_core.version import is_newer
 
-from . import __version__, auth, config_push, push
+from . import __version__, auth, config_push, org, push
 from .db import (
     Agent,
     Event,
-    LocationOption,
     Meta,
     OperationLog,
+    OrgNode,
     Recording,
     Relay,
     Release,
@@ -83,6 +83,9 @@ class DeviceOut(BaseModel):
     thumbnail_at: datetime | None
     recent_logs: list[dict]
     camera_resolutions: list[str]
+    location: dict = {}  # 六级位置（旧版 Agent 为空）
+    node_id: int | None = None  # 所在组织树节点；None = 未归位
+    owner: dict | None = None  # 解析后的责任人（含继承），没人负责为 None
 
 
 class DevicesOut(BaseModel):
@@ -124,6 +127,16 @@ def _thumbnail_info(settings: Settings, code: str) -> tuple[bool, datetime | Non
 # ---------- 应用 ----------
 
 
+class OrgNodeIn(BaseModel):
+    parent_id: int | None = None
+    level: str | None = None  # 新增时不传则按父节点的下一级
+    code: str | None = None
+    name: str | None = None
+    owner_name: str | None = None
+    owner_dept: str | None = None
+    owner_note: str | None = None
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
     SessionLocal: sessionmaker = make_session_factory(settings.database_url)
@@ -152,9 +165,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return bool(token) and auth.verify_session_token(token, session_secret)
 
     def _valid_bearer(request: Request) -> bool:
-        if not settings.api_token:
-            return False
-        return request.headers.get("Authorization", "") == f"Bearer {settings.api_token}"
+        """只读 API 令牌（EVERREC_API_TOKEN），给其他系统查询用。没配置时永远不通过。"""
+        return bool(settings.api_token) and \
+            request.headers.get("Authorization", "") == f"Bearer {settings.api_token}"
 
     def record_transition(s: Session, agent: Agent, new: Status, now: datetime) -> None:
         ev = transition_event(agent.status, new, settings.lost_after_seconds)
@@ -277,7 +290,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "checks": d["checks"], "problems": d["problems"], "restarts": d["restarts"],
             "pending_sync": d["pending_sync"], "disk_used": d["disk_used"],
             "camera_resolutions": d["camera_resolutions"],
+            "location": d.get("location") or {},
         }
+        if agent.last_payload["location"]:
+            org.ensure_chain(s, agent.last_payload["location"])
 
     def _upsert_relay_recording(s: Session, name: str, rec: dict) -> None:
         # 主服务器只存索引，文件留在中转节点；用 (relay_id, relay_rec_id) 去重
@@ -399,13 +415,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
-        """除 /healthz、登录接口外，/api/v1/* 都要登录；/devices 另接受只读 API 令牌。"""
+        """读接口（GET）公开，写操作要登录；登录接口始终公开。
+
+        只读 API 令牌（EVERREC_API_TOKEN）给人以外的系统查设备用：它能读，写操作一律 403，
+        免得一个"只读"令牌被拿来做修改。
+        """
         path = request.url.path
         if path.startswith("/api/v1/"):
-            if path == "/api/v1/login":
+            if path in ("/api/v1/login", "/api/v1/logout") or request.method == "GET":
                 return await call_next(request)
-            if path == "/api/v1/devices" and _valid_bearer(request):
-                return await call_next(request)
+            if _valid_bearer(request):
+                return JSONResponse(status_code=403, content={"detail": "只读令牌不能修改"})
             if not _valid_session(request):
                 return JSONResponse(status_code=401, content={"detail": "未登录"})
         return await call_next(request)
@@ -430,6 +450,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         resp = JSONResponse({"ok": True})
         resp.delete_cookie(auth.SESSION_COOKIE, path="/")
         return resp
+
+    @app.get("/api/v1/auth/status")
+    def auth_status(request: Request):
+        """当前是否已登录（设置页据此显示登录入口）。"""
+        return {"logged_in": _valid_session(request)}
 
     @app.post("/api/v1/devices/{code}/revoke")
     def revoke_device(code: str, s: Session = Depends(get_db)):
@@ -470,11 +495,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if hb.recent_logs:
             logs = (agent.recent_logs or []) + [x.model_dump(mode="json") for x in hb.recent_logs]
             agent.recent_logs = logs[-100:]
+        if hb.location:
+            org.ensure_chain(s, hb.location)
         record_transition(s, agent, device_status(agent, now, settings.lost_after_seconds), now)
         reply = HeartbeatReply(
             config_version=config_push.get_config_version(s),
             settings=config_push.agent_settings(config_push.effective_settings(s, hb.code)),
             location_options=config_push.location_options(s),
+            location_tree=org.tree_for_agents(s),
             token=token,
         )
         # storage.low：存储检查从 ok 变 warn/fail（设计文档 8.1 存储类事件）
@@ -502,6 +530,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             q = q.where(Agent.code.startswith(prefix))
         out: list[DeviceOut] = []
         summary = {st.value: 0 for st in Status}
+        org_nodes = list(s.scalars(select(OrgNode)))
+        org_by_id = {n.id: n for n in org_nodes}
         for a in s.scalars(q):
             st = device_status(a, now, settings.lost_after_seconds)
             summary[st] += 1
@@ -510,6 +540,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             p = a.last_payload or {}
             last = aware(a.last_heartbeat)
             has_thumb, thumb_at = _thumbnail_info(settings, a.code)
+            loc = p.get("location") or {}
+            node_id = org.device_node_id(org_nodes, loc) if loc else None
             out.append(DeviceOut(
                 id=a.id, code=a.code, hostname=a.hostname, version=a.version, status=st,
                 last_heartbeat=last, seconds_since_heartbeat=int((now - last).total_seconds()),
@@ -520,6 +552,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 has_thumbnail=has_thumb, thumbnail_at=thumb_at,
                 recent_logs=(a.recent_logs or [])[-20:],
                 camera_resolutions=p.get("camera_resolutions", []),
+                location=loc, node_id=node_id, owner=org.resolve_owner(org_by_id, node_id),
             ))
         total = sum(summary.values())
         mass_lost = total >= 3 and summary[Status.LOST] / total >= settings.mass_lost_ratio
@@ -635,6 +668,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # ---------- 设置（设计文档 7、10 设置页；tasks.md WP4） ----------
 
     _CODE_RE = re.compile(r"^[A-Za-z0-9-]+$")
+    _CODE_PART_RE = re.compile(r"^[A-Za-z0-9]+$")
 
     @app.get("/api/v1/settings")
     def get_settings(s: Session = Depends(get_db)):
@@ -705,26 +739,105 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "quality": profiles.quality_table(),
             "resolutions": [r.value for r in profiles.Resolution],
             "resolution_sizes": {r.value: list(profiles.RESOLUTION_SIZE[r]) for r in profiles.Resolution},
+            # 每个（分辨率 × 帧率）的每小时上限，前端直接查表，不再自己算码率
+            "mb_per_hour": {
+                r.value: {f: round(profiles.Encoding(r, f).mb_per_hour_max) for f in profiles.FPS_STOPS}
+                for r in profiles.Resolution
+            },
             "fps": list(profiles.FPS_STOPS),
             "recommended_quality": profiles.DEFAULT_QUALITY.value,
             "recommended_resolution": profiles.RECOMMENDED_RESOLUTION.value,
             "recommended_fps": profiles.RECOMMENDED_FPS,
         }
 
-    @app.put("/api/v1/location-options")
-    def put_location_options(data: dict[str, list[str]], s: Session = Depends(get_db)):
-        for level in data:
-            if level not in config_push.LEVELS:
-                raise HTTPException(status_code=422, detail=f"不支持的位置层级：{level}")
-        for row in s.scalars(select(LocationOption)).all():
-            s.delete(row)
-        for level, values in data.items():
-            for v in values:
-                if not _CODE_RE.fullmatch(v):
-                    raise HTTPException(status_code=422, detail="位置选项只能用英文、数字、连字符")
-                s.add(LocationOption(level=level, value=v))
+    # ---------- 组织树与责任人（部门 - 科室 - 区域 - 属地 - 位置） ----------
+
+    @app.get("/api/v1/org")
+    def get_org(s: Session = Depends(get_db)):
+        """整棵组织树：每个节点带设备汇总（含下级）和解析后的责任人。"""
+        now = datetime.now(UTC)
+        rows = [
+            (a.code, (a.last_payload or {}).get("location") or {},
+             device_status(a, now, settings.lost_after_seconds))
+            for a in s.scalars(select(Agent))
+        ]
+        return org.build_org(s, rows)
+
+    def _org_node(s: Session, node_id: int) -> OrgNode:
+        node = s.get(OrgNode, node_id)
+        if node is None:
+            raise HTTPException(status_code=404, detail="没有这个节点")
+        return node
+
+    def _node_has_devices(s: Session, node: OrgNode) -> bool:
+        nodes = list(s.scalars(select(OrgNode)))
+        by_id = {n.id: n for n in nodes}
+        for a in s.scalars(select(Agent)):
+            nid = org.device_node_id(nodes, (a.last_payload or {}).get("location") or {})
+            while nid is not None:
+                if nid == node.id:
+                    return True
+                nid = by_id[nid].parent_id
+        return False
+
+    @app.post("/api/v1/org/nodes")
+    def create_org_node(body: OrgNodeIn, s: Session = Depends(get_db)):
+        code = (body.code or "").strip()
+        if not _CODE_PART_RE.fullmatch(code):
+            raise HTTPException(status_code=422, detail="编号只能用英文和数字（会进文件路径）")
+        parent = _org_node(s, body.parent_id) if body.parent_id is not None else None
+        level = (parent.level + 1) if parent else 1
+        if level > len(org.LOCATION_LEVELS):
+            raise HTTPException(status_code=422, detail="“位置”下面不能再建下级，设备直接挂在位置上")
+        dup = s.scalar(select(OrgNode).where(
+            OrgNode.parent_id.is_(None) if parent is None else OrgNode.parent_id == parent.id,
+            OrgNode.code == code,
+        ))
+        if dup is not None:
+            raise HTTPException(status_code=409, detail="同一上级下已经有这个编号")
+        node = OrgNode(
+            parent_id=parent.id if parent else None, level=level, code=code,
+            name=(body.name or "").strip(), owner_name=(body.owner_name or "").strip(),
+            owner_dept=(body.owner_dept or "").strip(), owner_note=(body.owner_note or "").strip(),
+        )
+        s.add(node)
         config_push.bump_config_version(s)
-        log_operation(s, "settings", None, detail="位置选项")
+        log_operation(s, "settings", None, detail=f"新增组织节点 {code}")
+        s.commit()
+        return {"ok": True, "id": node.id}
+
+    @app.put("/api/v1/org/nodes/{node_id}")
+    def update_org_node(node_id: int, body: OrgNodeIn, s: Session = Depends(get_db)):
+        node = _org_node(s, node_id)
+        if body.code is not None and body.code.strip() != node.code:
+            if _node_has_devices(s, node):
+                raise HTTPException(
+                    status_code=409,
+                    detail="这个节点下已有设备，编号会进录像路径，不能改；可以改名称和责任人")
+            code = body.code.strip()
+            if not _CODE_PART_RE.fullmatch(code):
+                raise HTTPException(status_code=422, detail="编号只能用英文和数字（会进文件路径）")
+            node.code = code
+        for field in ("name", "owner_name", "owner_dept", "owner_note"):
+            v = getattr(body, field)
+            if v is not None:
+                setattr(node, field, v.strip())
+        node.updated_at = utcnow()
+        config_push.bump_config_version(s)
+        log_operation(s, "settings", None, detail=f"修改组织节点 {node.code}")
+        s.commit()
+        return {"ok": True}
+
+    @app.delete("/api/v1/org/nodes/{node_id}")
+    def delete_org_node(node_id: int, s: Session = Depends(get_db)):
+        node = _org_node(s, node_id)
+        if s.scalar(select(OrgNode.id).where(OrgNode.parent_id == node.id).limit(1)) is not None:
+            raise HTTPException(status_code=409, detail="请先删除它下面的节点")
+        if _node_has_devices(s, node):
+            raise HTTPException(status_code=409, detail="这个节点下还有设备，不能删除")
+        s.delete(node)
+        config_push.bump_config_version(s)
+        log_operation(s, "settings", None, detail=f"删除组织节点 {node.code}")
         s.commit()
         return {"ok": True}
 
@@ -775,6 +888,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
              "sha256": r.sha256, "notes": r.notes, "created_at": r.created_at}
             for r in rows
         ]
+
+    @app.get("/api/v1/releases/{rid}/download")
+    def download_release(rid: int, s: Session = Depends(get_db)):
+        """下载安装包（网页"客户端下载与更新"用，读接口免登录）。"""
+        row = s.get(Release, rid)
+        if row is None:
+            raise HTTPException(status_code=404, detail="版本不存在")
+        path = Path(row.path)
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="安装包文件缺失")
+        log_operation(s, "download", None, detail=f"下载安装包 {row.version}")
+        s.commit()
+        return FileResponse(path, filename=row.filename, media_type="application/octet-stream")
 
     @app.delete("/api/v1/releases/{rid}")
     def delete_release(rid: int, s: Session = Depends(get_db)):
