@@ -77,6 +77,7 @@ class DeviceOut(BaseModel):
     checks: dict
     problems: list[str]
     restarts: int
+    paused: str = ""  # 不算异常但没画面的原因，例如"锁屏暂停"（录屏源，WP12）
     pending_sync: int
     disk_used: float
     has_thumbnail: bool
@@ -289,6 +290,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         agent.last_payload = {
             "recording": d["recording"], "profile": d["profile"], "current_segment": d["current_segment"],
             "checks": d["checks"], "problems": d["problems"], "restarts": d["restarts"],
+            "paused": d.get("paused", ""),
             "pending_sync": d["pending_sync"], "disk_used": d["disk_used"],
             "camera_resolutions": d["camera_resolutions"],
             "location": d.get("location") or {},
@@ -549,6 +551,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 recording=bool(p.get("recording")), profile=p.get("profile"),
                 current_segment=p.get("current_segment"), checks=p.get("checks", {}),
                 problems=p.get("problems", []), restarts=p.get("restarts", 0),
+                paused=p.get("paused", ""),
                 pending_sync=p.get("pending_sync", 0), disk_used=p.get("disk_used", 0),
                 has_thumbnail=has_thumb, thumbnail_at=thumb_at,
                 recent_logs=(a.recent_logs or [])[-20:],

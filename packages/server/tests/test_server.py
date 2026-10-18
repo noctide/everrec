@@ -59,6 +59,17 @@ def test_heartbeat_registers_and_lists(tmp_path):
         assert c.get("/api/v1/devices", params={"prefix": "SUB"}).json()["items"][0]["code"] == "SUB-B-2F-001"
 
 
+def test_screen_locked_is_not_abnormal(tmp_path):
+    """录屏源锁屏暂停：确实没画面，但不算异常、不推送事件（tasks.md WP12）。"""
+    app, url = _app(tmp_path)
+    with TestClient(app) as c:
+        token = _first_hb(c)
+        _next_hb(c, token, recording=False, paused="锁屏暂停")
+        d = c.get("/api/v1/devices").json()["items"][0]
+        assert d["status"] == "ok" and d["paused"] == "锁屏暂停"
+    assert _events(url) == []
+
+
 def test_stalled_recording_is_abnormal_and_raises_event(tmp_path):
     app, url = _app(tmp_path)
     with TestClient(app) as c:

@@ -52,6 +52,7 @@ export interface Device {
   owner: Owner | null;
   problems: string[];
   restarts: number;
+  paused: string; // 不算异常但没画面的原因，例如"锁屏暂停"（录屏源）
   pending_sync: number;
   disk_used: number;
   has_thumbnail: boolean;

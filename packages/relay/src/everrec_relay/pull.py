@@ -81,6 +81,7 @@ def _serialize_devices(s: Session, lost_after: int) -> list[dict]:
             "recording": bool(p.get("recording")), "profile": p.get("profile"),
             "current_segment": p.get("current_segment"), "checks": p.get("checks", {}),
             "problems": p.get("problems", []), "restarts": p.get("restarts", 0),
+            "paused": p.get("paused", ""),
             "pending_sync": p.get("pending_sync", 0), "disk_used": p.get("disk_used", 0),
             "recent_logs": (a.recent_logs or [])[-20:],
             "camera_resolutions": p.get("camera_resolutions", []),
