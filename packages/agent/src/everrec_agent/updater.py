@@ -1,11 +1,11 @@
 """Agent 自动更新（tasks.md WP9、设计文档 14.5）。
 
 每天在设定时段（服务端下发 update_mode / update_window_start / update_window_end，
-默认 auto / 02:00–04:00）向服务器检查版本：有新版且服务端判定"该更新"时，
-下载安装包到临时目录、校验 SHA-256、静默安装（Inno Setup /VERYSILENT），
-安装器会停服务、替换文件、重启，Agent 随之退出。
+默认 auto / 02:00–04:00）向服务器检查版本：有新版且服务端判定"该更新"（没人用桌面）时，
+下载安装包到临时目录、校验 SHA-256、收掉登录会话里占着文件的托盘/录屏进程、
+静默安装（Inno Setup /VERYSILENT），安装器会停服务、替换文件、重启，Agent 随之退出。
 
-只提醒模式（update_mode=notify）或不在时段内：只记一条日志，不下载不安装。
+只提醒模式（update_mode=notify）、不在时段内或机器上有人在用：只记一条日志，不下载不安装。
 更新逻辑本身在 Linux 上可测；真正"运行安装器"是 Windows 专用步骤，做成可注入，
 测试里用假安装器替代。
 
@@ -21,7 +21,8 @@ import os
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, fields
 from pathlib import Path
 
 import httpx
@@ -40,8 +41,8 @@ class UpdatePlan:
 
     update_available: bool = False
     should_update: bool = False
-    # 有新版、也在时段内，但机器上有人登录着，服务端让等（WP9：不换正在用的 exe）
-    waiting_for_logout: bool = False
+    # 有新版、也在时段内，但机器上有人在用桌面，服务端让等（WP9：不换正在用的 exe）
+    waiting_for_idle: bool = False
     latest_version: str | None = None
     update_mode: str = "auto"
     sha256: str = ""
@@ -50,9 +51,16 @@ class UpdatePlan:
     notes: str | None = None
 
 
+_PLAN_FIELDS = {f.name for f in fields(UpdatePlan)}
+
+
 def check(server: str, code: str, token: str, current_version: str,
           *, http: httpx.Client | None = None) -> UpdatePlan | None:
-    """向服务器检查更新。连不上返回 None（不影响录制）。"""
+    """向服务器检查更新。连不上返回 None（不影响录制）。
+
+    只取 `UpdatePlan` 认识的字段：服务端以后加新字段时，老版本 Agent 照常能检查更新，
+    不会因为多一个键整条解析失败（反过来说，老 Agent 要能收到新版本，得先手动装一次）。
+    """
     client = http or net.client(timeout=15)
     try:
         r = client.get(
@@ -61,7 +69,7 @@ def check(server: str, code: str, token: str, current_version: str,
             headers={"X-Agent-Token": token},
         )
         r.raise_for_status()
-        return UpdatePlan(**r.json())
+        return UpdatePlan(**{k: v for k, v in r.json().items() if k in _PLAN_FIELDS})
     except (httpx.HTTPError, ValueError, KeyError) as e:
         log.warning("检查更新失败（继续录制）：%s", e)
         return None
@@ -122,24 +130,32 @@ def install(package: Path, *, runner=subprocess.Popen) -> bool:
 
 
 def run_update(server: str, code: str, token: str, current_version: str,
-               *, http: httpx.Client | None = None, runner=subprocess.Popen) -> str:
-    """完整跑一次更新检查。返回动作描述（no-update / notify / downloaded / installed / failed）。"""
+               *, http: httpx.Client | None = None, runner=subprocess.Popen,
+               before_install: Callable[[], bool] | None = None) -> str:
+    """完整跑一次更新检查。返回动作描述（no-update / notify / waiting-for-idle / installed / busy / failed）。
+
+    `before_install`：安装包下载校验通过后、拉起安装器之前调用，用来腾出被占用的文件
+    （结束登录会话里的托盘/录屏进程）。返回 False 表示腾不出来，放弃本次更新。
+    """
     plan = check(server, code, token, current_version, http=http)
     if plan is None:
         return "unreachable"
     if not plan.update_available:
         return "no-update"
     if not plan.should_update:
-        if plan.waiting_for_logout:
-            # 有人登录着：托盘和录屏进程正在用这些 exe，换了会坏，等服务端下次放行
-            log.info("发现新版本 %s，但机器上有人登录，等没人登录时再装", plan.latest_version)
-            return "waiting-for-logout"
+        if plan.waiting_for_idle:
+            # 有人在用桌面（或者刚锁屏不久）：安装器换不了正在用的 exe，等服务端下次放行
+            log.info("发现新版本 %s，但机器上有人在用，等没人用的时候再装", plan.latest_version)
+            return "waiting-for-idle"
         # 只提醒模式或不在时段内：记日志，不下载
         log.info("发现新版本 %s，但当前不自动安装（模式 %s）", plan.latest_version, plan.update_mode)
         return "notify"
     package = download(server, code, token, plan.download_url, plan.sha256, http=http)
     if package is None:
         return "failed"
+    if before_install is not None and not before_install():
+        package.unlink(missing_ok=True)  # 下次再来，安装包不带回去
+        return "busy"
     if install(package, runner=runner):
         return "installed"
     package.unlink(missing_ok=True)
