@@ -143,7 +143,7 @@ def test_send_thumbnail_uploads(tmp_path, monkeypatch):
         calls["content"] = kw.get("content")
         return httpx.Response(200, json={"ok": True})
 
-    monkeypatch.setattr("everrec_agent.agent.httpx.put", fake_put)
+    monkeypatch.setattr("everrec_agent.agent.net.put", fake_put)
     Agent(cfg).send_thumbnail()
     assert calls["url"] == "http://test/agent/v1/thumbnail?code=HD-A-012"
     assert calls["content"] == b"\xff\xd8 fake-jpeg"

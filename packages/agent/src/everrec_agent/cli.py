@@ -107,7 +107,21 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _use_utf8_console() -> None:
+    """让命令行输出用 UTF-8。
+
+    Windows 上的控制台/重定向输出可能不是 UTF-8（英文系统是 cp1252），这时 print 中文会抛
+    UnicodeEncodeError：命令明明已经把配置生成好了，最后却带着报错退出，现场看着像失败。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):  # 没有这俩流（pythonw）或流不可配置
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _use_utf8_console()
     p = argparse.ArgumentParser(prog="everrec-agent", description="EverRec 采集端")
     sub = p.add_subparsers(dest="cmd", required=True)
 

@@ -26,6 +26,7 @@ from everrec_core.config import AgentConfig, CameraType
 from everrec_core.protocol import UploadCompleteReply, UploadInitReply, UploadRequest
 from everrec_core.repair import probe_duration
 
+from . import net
 from .index import IndexEntry, SegmentIndex
 
 log = logging.getLogger("uploader")
@@ -103,7 +104,7 @@ class Uploader:
         self.chunk = chunk
         self.backoff_min = backoff_min
         self.backoff_max = backoff_max
-        self.http = http or httpx.Client(timeout=httpx.Timeout(60.0, connect=10.0))
+        self.http = http or net.client(timeout=httpx.Timeout(60.0, connect=10.0))
         self.buckets = {
             "realtime": TokenBucket(realtime_bps / 8),
             "backfill": TokenBucket(backfill_bps / 8),

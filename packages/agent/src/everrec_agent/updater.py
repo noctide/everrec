@@ -26,6 +26,8 @@ from pathlib import Path
 
 import httpx
 
+from . import net
+
 log = logging.getLogger("everrec.updater")
 
 # Inno Setup 静默安装参数：无界面、不弹框、不重启（安装器自己停启服务）
@@ -51,7 +53,7 @@ class UpdatePlan:
 def check(server: str, code: str, token: str, current_version: str,
           *, http: httpx.Client | None = None) -> UpdatePlan | None:
     """向服务器检查更新。连不上返回 None（不影响录制）。"""
-    client = http or httpx.Client(timeout=15)
+    client = http or net.client(timeout=15)
     try:
         r = client.get(
             server.rstrip("/") + "/agent/v1/version-check",
@@ -71,7 +73,7 @@ def check(server: str, code: str, token: str, current_version: str,
 def download(server: str, code: str, token: str, url: str, expected_sha256: str,
              *, http: httpx.Client | None = None) -> Path | None:
     """下载安装包到临时目录并校验 SHA-256。失败返回 None，不落任何残留。"""
-    client = http or httpx.Client(timeout=httpx.Timeout(300.0, connect=15.0))
+    client = http or net.client(timeout=httpx.Timeout(300.0, connect=15.0))
     dest: Path | None = None
     try:
         full = url if url.startswith("http") else server.rstrip("/") + url

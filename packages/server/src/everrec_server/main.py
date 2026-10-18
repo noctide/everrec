@@ -1019,4 +1019,7 @@ def run() -> None:
     p.add_argument("--port", type=int, default=8080)
     args = p.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    # httpx 每个请求打一行 INFO（拉中转节点、取缩略图），把服务端日志刷满业务无关的请求行
+    for noisy in ("httpx", "httpcore"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
     uvicorn.run(create_app(), host=args.host, port=args.port)
