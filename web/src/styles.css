@@ -321,39 +321,34 @@ label.check input { height: auto; }
 .strip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }
 .strip-right { margin-left: auto; display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
-.wall { display: grid; grid-template-columns: repeat(auto-fill, minmax(204px, 1fr)); gap: 6px; }
+.wall { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 6px; }
+/* 首页只放编号和状态，不放画面预览：画面去设备墙看，两边不重复。格子小，35 台一屏放完 */
 .cell {
-  display: flex; flex-direction: column; text-align: left; padding: 0; overflow: hidden; cursor: pointer;
+  display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 6px 8px 7px;
+  overflow: hidden; cursor: pointer; min-width: 0;
   background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
   font: inherit; color: inherit;
 }
 .cell:hover { border-color: var(--line-2); }
 .cell.offline_local { border-color: var(--warn-line); }
 .cell.abnormal, .cell.lost { border-color: var(--bad-line); }
-.frame { position: relative; aspect-ratio: 16 / 9; overflow: hidden; background: var(--thumb); }
-.frame img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
-.frame .noimg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #4b5a6a; font-size: 11px; }
-.frame .flag {
-  position: absolute; top: 6px; right: 6px; height: 18px; padding: 0 6px;
-  display: inline-flex; align-items: center; border-radius: 3px;
-  font-size: 10px; font-weight: 500; color: #fff; background: rgb(15 23 32 / 0.62);
-}
-.frame .flag.offline_local { background: var(--warn); }
-.frame .flag.abnormal, .frame .flag.lost { background: var(--bad); }
-.frame .osd {
-  position: absolute; left: 6px; bottom: 5px; font-family: var(--mono); font-size: 10px; line-height: 1;
-  color: rgb(255 255 255 / 0.62); font-variant-numeric: tabular-nums;
-}
-.cell-foot { padding: 5px 8px 6px; display: flex; flex-direction: column; min-width: 0; }
+.cell-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .cell-code {
+  flex: 1; min-width: 0;
   font-family: var(--mono); font-size: 11.5px; line-height: 1.45; font-weight: 500; color: var(--strong);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.cell-meta {
-  display: flex; align-items: center; gap: 5px; min-width: 0; line-height: 1.45;
-  font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums;
+.cell-flag {
+  flex: none; height: 17px; padding: 0 5px; border-radius: 3px;
+  display: inline-flex; align-items: center; font-size: 10px; font-weight: 500; color: #fff;
 }
-.cell-meta span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cell-flag.offline_local { background: var(--warn); }
+.cell-flag.abnormal, .cell-flag.lost { background: var(--bad); }
+.cell-meta {
+  min-width: 0; line-height: 1.45; font-size: 11px; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .cell-meta.offline_local { color: var(--warn); }
 .cell-meta.abnormal, .cell-meta.lost { color: var(--bad); }
 
@@ -364,7 +359,7 @@ label.check input { height: auto; }
   .rail { position: fixed; z-index: 30; left: 0; top: 0; bottom: 0; width: 280px; height: auto; transform: translateX(-100%); transition: transform 0.2s; }
   .rail.open { transform: none; box-shadow: 0 0 24px rgb(0 0 0 / 0.18); }
   .board-scrim.open { display: block; position: fixed; inset: 0; z-index: 20; background: rgb(0 0 0 / 0.3); }
-  .wall { grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); }
+  .wall { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
   .board-role { display: none; }
 }
 
@@ -372,8 +367,8 @@ label.check input { height: auto; }
 @media (max-height: 820px) {
   .board-main { padding: 8px 14px 10px; }
   .board-head, .strip { margin-bottom: 6px; }
-  .wall { grid-template-columns: repeat(auto-fill, minmax(138px, 1fr)); gap: 5px; }
+  .wall { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 5px; }
+  .cell { padding: 5px 6px 6px; }
   .cell-code { font-size: 10.5px; }
   .cell-meta { font-size: 10px; }
-  .cell-foot { padding: 4px 6px 5px; }
 }
