@@ -32,6 +32,7 @@ const FLAG: Record<Status, string> = {
 
 /** 用大白话写这台设备现在怎么了，长度控制在格子里能放下一行。 */
 function shortWhy(d: Device): string {
+  if (d.paused) return d.paused; // 锁屏暂停：没画面但不是故障
   if (d.status === "lost") return `${ago(d.seconds_since_heartbeat).replace("前", "")}没有消息`;
   if (d.status === "offline_local") {
     return d.pending_sync > 0 ? `连不上服务器 · 待补传 ${d.pending_sync} 段` : "连不上服务器，本机在录";

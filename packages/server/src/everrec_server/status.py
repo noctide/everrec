@@ -33,6 +33,9 @@ def device_status(agent: Agent, now: datetime, lost_after: int) -> Status:
     checks = p.get("checks", {})
     if p.get("starting") and "fail" not in checks.values():
         return Status.OK  # 刚启动的宽限期，不算异常也不推送
+    if p.get("paused") and "fail" not in checks.values():
+        # 锁屏暂停（录屏源）：确实没画面，但不是故障，不推送、不标红（tasks.md WP12）
+        return Status.OK
     if not p.get("recording") or "fail" in checks.values():
         return Status.ABNORMAL
     if p.get("offline_since"):  # Agent 自己报告"离线时在本地录了、还没补传完"

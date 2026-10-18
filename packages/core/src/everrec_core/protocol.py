@@ -44,6 +44,8 @@ class Heartbeat(BaseModel):
     current_segment: str | None = None
     checks: Checks = Checks()
     problems: list[str] = []
+    # 不算异常、但确实没画面的原因（录屏时锁屏 / 没人登录）。有值时服务端不判异常（WP12）
+    paused: str = ""
     restarts: int = 0
     pending_sync: int = 0
     disk_used: float = 0

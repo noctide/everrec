@@ -119,7 +119,7 @@ export default function DeviceWall() {
               {d.status === "lost" && d.thumbnail_at && (
                 <span className="note thumb-age">最后画面 {ago((Date.now() - Date.parse(d.thumbnail_at)) / 1000)}</span>
               )}
-              <span className={`pill ${d.status}`}>{STATUS_TEXT[d.status]}</span>
+              <span className={`pill ${d.status}`}>{d.paused || STATUS_TEXT[d.status]}</span>
             </div>
             <div className="card-body">
               <div className="mono code">{d.code}</div>

@@ -63,7 +63,8 @@ export default function DeviceDrawer({
         </div>
 
         <dl>
-          <dt>状态</dt><dd>{STATUS_TEXT[device.status]}</dd>
+          <dt>状态</dt>
+          <dd>{STATUS_TEXT[device.status]}{device.paused ? `（${device.paused}）` : ""}</dd>
           <dt>电脑</dt><dd>{device.hostname} · Agent {device.version}</dd>
           <dt>画质</dt><dd>{device.profile ?? "—"}</dd>
           <dt>检查</dt>

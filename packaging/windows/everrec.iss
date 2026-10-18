@@ -37,9 +37,10 @@ Name: "desktopicons"; Description: "创建桌面快捷方式"; GroupDescription:
 Name: "startup"; Description: "开机自动运行托盘（所有用户启动项）"; GroupDescription: "开机自启："
 
 [Files]
-; 两个 onedir 程序整体拷进 {app}\下同名子目录
+; 三个 onedir 程序整体拷进 {app}\下同名子目录
 Source: "{#DistDir}\everrec-agent\*";   DestDir: "{app}\everrec-agent";   Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#DistDir}\everrec-desktop\*"; DestDir: "{app}\everrec-desktop"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#DistDir}\everrec-screen\*";  DestDir: "{app}\everrec-screen";  Flags: ignoreversion recursesubdirs createallsubdirs
 ; WinSW 服务定义 + 服务二进制（WinSW-x64.exe 需提前改名放到 packaging\windows\winsw\）
 Source: "..\..\deploy\windows\everrec-agent.xml"; DestDir: "{app}"; Flags: ignoreversion
 Source: "winsw\everrec-agent-service.exe";        DestDir: "{app}"; Flags: ignoreversion
@@ -55,6 +56,12 @@ Name: "{autodesktop}\{#MyAppName}";            Filename: "{app}\everrec-desktop\
 ; 托盘加入所有用户启动项（HKLM ...\Run = 所有用户）
 Root: HKLM; Subkey: "SOFTWARE\Microsoft\Windows\CurrentVersion\Run"; \
   ValueType: string; ValueName: "EverRecDesktop"; ValueData: """{app}\everrec-desktop\everrec-desktop.exe"" --tray"; \
+  Flags: uninsdeletevalue; Tasks: startup
+; 录屏进程（tasks.md WP12）：必须跑在登录用户的会话里才抓得到桌面。
+; 配置里不是录屏时它自己会退出，所以可以一直挂着。
+Root: HKLM; Subkey: "SOFTWARE\Microsoft\Windows\CurrentVersion\Run"; \
+  ValueType: string; ValueName: "EverRecScreen"; \
+  ValueData: """{app}\everrec-screen\everrec-screen.exe"" --install-dir ""{app}"""; \
   Flags: uninsdeletevalue; Tasks: startup
 
 [Run]

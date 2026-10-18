@@ -23,7 +23,7 @@ from pathlib import Path
 import httpx
 
 from everrec_core import repair
-from everrec_core.config import AgentConfig, load_config
+from everrec_core.config import AgentConfig, CameraType, load_config
 from everrec_core.ffmpeg import camera_device, effective_encoding, list_camera_modes, spool_dir
 from everrec_core.health import Check, GrowthWatcher, storage_check
 from everrec_core.protocol import Checks, Heartbeat, HeartbeatReply
@@ -33,6 +33,7 @@ from . import __version__, child_guard, updater
 from .index import IndexEntry, SegmentIndex
 from .logs import RecentProblems
 from .recorder import Recorder
+from .screen import ScreenMonitor
 from .uploader import Uploader
 
 log = logging.getLogger("agent")
@@ -47,7 +48,10 @@ class Agent:
     def __init__(self, cfg: AgentConfig, recent: RecentProblems | None = None, stall_seconds: float = 30):
         self.cfg = cfg
         self.recent = recent or RecentProblems()
-        self.recorder = Recorder(cfg)
+        # 录屏模式（WP12）：FFmpeg 在登录用户的会话里跑，服务只读 state/screen.json 监督它
+        self.recorder: Recorder | ScreenMonitor = (
+            ScreenMonitor(cfg) if cfg.camera.type is CameraType.SCREEN else Recorder(cfg)
+        )
         self.watcher = GrowthWatcher(spool_dir(cfg), stall_seconds)
         self.index = SegmentIndex(cfg.state_dir)
         self.checks = Checks()
@@ -226,6 +230,7 @@ class Agent:
             current_segment=self.watcher.current_segment,
             checks=self.checks,
             problems=self.problems,
+            paused=self.paused,
             restarts=self.recorder.restarts,
             pending_sync=self.index.pending_count(),
             disk_used=round(self.disk_used, 3),
@@ -331,13 +336,21 @@ class Agent:
     def run_checks(self) -> None:
         problems: list[str] = []
         self.recorder.supervise()
+        paused = self.paused
 
         process = Check.OK if self.recorder.running else Check.FAIL
         if process is Check.FAIL:
-            problems.append("录制进程未运行")
+            problems.append(
+                "录屏进程未运行（检查登录启动项）" if self._screen else "录制进程未运行"
+            )
 
         dataflow, msg = self.watcher.check()
-        if not self.recorder.running:
+        if paused:
+            # 锁屏 / 没人登录：本来就抓不到画面，不算数据流异常，也别去"重启"（WP12）
+            dataflow = Check.OK
+            self.watcher.reset()
+            problems.append(paused)
+        elif not self.recorder.running:
             dataflow = Check.FAIL  # 进程都没在跑，文件不可能在长
             self.watcher.reset()
         elif dataflow is Check.FAIL:
@@ -366,9 +379,20 @@ class Agent:
         self.problems = problems
 
     @property
+    def _screen(self) -> bool:
+        """录屏模式：FFmpeg 跑在登录用户的会话里，Agent 只管监督（WP12）。"""
+        return isinstance(self.recorder, ScreenMonitor)
+
+    @property
+    def paused(self) -> str:
+        """不算异常、但确实没画面的原因（录屏时锁屏）；空字符串表示正常。"""
+        return "锁屏暂停" if getattr(self.recorder, "locked", False) else ""
+
+    @property
     def recording(self) -> bool:
         return (
             self.recorder.running
+            and not self.paused
             and self.checks.dataflow is Check.OK
             and self.watcher.grew_since_reset
         )
@@ -398,6 +422,7 @@ class Agent:
             current_segment=self.watcher.current_segment,
             checks=self.checks,
             problems=self.problems,
+            paused=self.paused,
             restarts=self.recorder.restarts,
             pending_sync=self.index.pending_count(),
             disk_used=round(self.disk_used, 3),
@@ -520,8 +545,10 @@ class Agent:
         self.maybe_thumbnail()
 
     def run(self) -> None:
-        log.info("EverRec Agent %s 启动，位置编号 %s，录像目录 %s，错峰偏移 %d 秒",
-                 __version__, self.cfg.code, self.cfg.recordings_dir, self.cfg.stagger_seconds)
+        log.info("EverRec Agent %s 启动，位置编号 %s，%s，录像目录 %s，错峰偏移 %d 秒",
+                 __version__, self.cfg.code,
+                 "录屏（FFmpeg 在登录会话里跑）" if self._screen else "摄像头录制",
+                 self.cfg.recordings_dir, self.cfg.stagger_seconds)
         child_guard.kill_orphans(spool_dir(self.cfg))  # 先放出摄像头，再处理上次留下的文件
         for w in self.cfg.config_warnings:
             log.warning("配置文件有误：%s", w)
@@ -544,9 +571,11 @@ class Agent:
                     log.exception("主循环异常")
         finally:
             self.recorder.stop()
-            # 正常停止时最后一段也是完整的
-            for seg in list_spool(spool_dir(self.cfg)):
-                self._archive(seg)
+            # 正常停止时最后一段也是完整的。录屏模式下 FFmpeg 在用户会话里还在写，
+            # 把它正在写的那段归档走会得到坏文件；留给下次启动的 recover_spool 处理。
+            if not self._screen:
+                for seg in list_spool(spool_dir(self.cfg)):
+                    self._archive(seg)
             if self.uploader:
                 self.uploader.stop()
             log.info("Agent 已停止")
