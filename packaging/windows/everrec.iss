@@ -42,23 +42,26 @@ Source: "{#DistDir}\everrec-agent\*";   DestDir: "{app}\everrec-agent";   Flags:
 Source: "{#DistDir}\everrec-desktop\*"; DestDir: "{app}\everrec-desktop"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#DistDir}\everrec-screen\*";  DestDir: "{app}\everrec-screen";  Flags: ignoreversion recursesubdirs createallsubdirs
 ; WinSW 服务定义 + 服务二进制（WinSW-x64.exe 需提前改名放到 packaging\windows\winsw\）
-Source: "..\..\deploy\windows\everrec-agent.xml"; DestDir: "{app}"; Flags: ignoreversion
+; 服务定义文件名必须跟服务程序同名：everrec-agent-service.exe ↔ everrec-agent-service.xml
+Source: "..\..\deploy\windows\everrec-agent-service.xml"; DestDir: "{app}"; Flags: ignoreversion
 Source: "winsw\everrec-agent-service.exe";        DestDir: "{app}"; Flags: ignoreversion
 ; 安装期脚本
 Source: "..\..\deploy\windows\setup-postinstall.ps1"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\{#MyAppName}\录像客户端"; Filename: "{app}\everrec-desktop\everrec-desktop.exe"
-Name: "{autoprograms}\{#MyAppName}\修复工具";   Filename: "{app}\everrec-desktop\everrec-desktop.exe"; Parameters: "--repair"
-Name: "{autodesktop}\{#MyAppName}";            Filename: "{app}\everrec-desktop\everrec-desktop.exe"; Tasks: desktopicons
+; 通过快捷方式启动的客户端要显式指定安装目录，否则它会把 exe 所在的 everrec-desktop\ 当成安装目录，读不到 config\
+Name: "{autoprograms}\{#MyAppName}\录像客户端"; Filename: "{app}\everrec-desktop\everrec-desktop.exe"; Parameters: "--install-dir ""{app}"""
+Name: "{autoprograms}\{#MyAppName}\修复工具";   Filename: "{app}\everrec-desktop\everrec-desktop.exe"; Parameters: "--repair --install-dir ""{app}"""
+Name: "{autodesktop}\{#MyAppName}";            Filename: "{app}\everrec-desktop\everrec-desktop.exe"; Parameters: "--install-dir ""{app}"""; Tasks: desktopicons
 
 [Registry]
 ; 托盘加入所有用户启动项（HKLM ...\Run = 所有用户）
 Root: HKLM; Subkey: "SOFTWARE\Microsoft\Windows\CurrentVersion\Run"; \
-  ValueType: string; ValueName: "EverRecDesktop"; ValueData: """{app}\everrec-desktop\everrec-desktop.exe"" --tray"; \
+  ValueType: string; ValueName: "EverRecDesktop"; \
+  ValueData: """{app}\everrec-desktop\everrec-desktop.exe"" --tray --install-dir ""{app}"""; \
   Flags: uninsdeletevalue; Tasks: startup
 ; 录屏进程（tasks.md WP12）：必须跑在登录用户的会话里才抓得到桌面。
-; 配置里不是录屏时它自己会退出，所以可以一直挂着。
+; 配置里不是录屏时它只待着不动，所以可以一直挂着。
 Root: HKLM; Subkey: "SOFTWARE\Microsoft\Windows\CurrentVersion\Run"; \
   ValueType: string; ValueName: "EverRecScreen"; \
   ValueData: """{app}\everrec-screen\everrec-screen.exe"" --install-dir ""{app}"""; \

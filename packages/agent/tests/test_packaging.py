@@ -1,0 +1,49 @@
+"""安装包与打包脚本的一致性（WP9）。
+
+这类错只有在干净的 Windows 上装一遍才会暴露：服务注册失败、托盘读不到配置、装完打不开。
+所以在这里把三处路径钉住——WinSW 定义的文件名与可执行文件、快捷方式/启动项的安装目录、
+打包产物与安装包拷贝的目录。
+"""
+
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[3]  # packages/agent/tests → 仓库根
+ISS = ROOT / "packaging" / "windows" / "everrec.iss"
+BUILD = ROOT / "packaging" / "windows" / "build.ps1"
+SERVICE_XML = ROOT / "deploy" / "windows" / "everrec-agent-service.xml"
+
+
+def test_service_xml_name_matches_service_exe():
+    """WinSW 只读跟可执行文件同名的配置：everrec-agent-service.exe ↔ everrec-agent-service.xml。"""
+    iss = ISS.read_text(encoding="utf-8")
+    assert SERVICE_XML.exists(), "服务定义文件不在 deploy/windows/"
+    assert "winsw\\everrec-agent-service.exe" in iss, "安装包里服务程序不叫 everrec-agent-service.exe"
+    assert "deploy\\windows\\everrec-agent-service.xml" in iss, "安装包里没带上同名的服务定义"
+
+
+def test_service_points_at_agent_inside_its_folder():
+    """%BASE% 是安装目录，Agent 本体在 {app}\\everrec-agent\\ 里，不能写成 %BASE%\\everrec-agent.exe。"""
+    root = ET.parse(SERVICE_XML).getroot()
+    exe = root.findtext("executable", "").lower()
+    assert exe == r"%base%\everrec-agent\everrec-agent.exe".lower()
+    assert r"%BASE%\config\everrec.yaml" in root.findtext("arguments", "")
+
+
+def test_launched_programs_get_install_dir():
+    """快捷方式和启动项里的客户端/录屏进程必须带 --install-dir {app}，否则找不到 config\\。"""
+    for line in ISS.read_text(encoding="utf-8").splitlines():
+        text = line.strip()
+        if not text or text.startswith(";"):
+            continue
+        if "everrec-desktop.exe" in text or "everrec-screen.exe" in text:
+            assert "--install-dir" in text, f"这条启动项没带安装目录：{text}"
+
+
+def test_build_outputs_match_what_installer_copies():
+    """build.ps1 打出来的每个程序，安装包都要拷过去（多一个少一个都会让安装后缺文件）。"""
+    build = BUILD.read_text(encoding="utf-8")
+    iss = ISS.read_text(encoding="utf-8")
+    for name in ("everrec-agent", "everrec-desktop", "everrec-screen"):
+        assert f'Name = "{name}"' in build, f"build.ps1 没有打包 {name}"
+        assert "{#DistDir}\\" + name + "\\*" in iss, f"安装包没有拷贝 {name}"

@@ -7,7 +7,8 @@
     1. 允许桌面应用访问相机（否则 dshow 取不到画面）。
     2. 电源计划：接通电源时从不睡眠（24 小时连续录像的前提）。
     3. 关闭 USB 选择性暂停（防止摄像头被挂起掉线）。
-    4. 配置文件 ACL：只有管理员可写（防止普通程序/用户误改服务器地址等）。
+    4. 权限：配置文件管理员可写、普通用户只读；recordings / state / logs 允许登录用户写
+       （录屏进程跑在用户会话里，要写 _spool 和状态文件）。
   任一步失败只记日志，不中断安装（现场机器环境各异，不能因个别项失败卡住安装）。
 
 .PARAMETER InstallDir
@@ -63,29 +64,45 @@ try {
     Write-Log "设置电源计划失败（不影响安装）：$($_.Exception.Message)"
 }
 
-# ---- 3. 配置文件 ACL：只有管理员可写 ----
+# ---- 3. 权限 ----
+# 配置文件：管理员和 SYSTEM 可写，普通用户只读——客户端和录屏进程都以登录用户身份读它，
+# 只给管理员和 SYSTEM 的话，客户端会读不到配置、录屏进程也起不来。
 $cfg = Join-Path $InstallDir "config\everrec.yaml"
 try {
     if (Test-Path $cfg) {
-        # 取继承的 Administrators 组，移除其他用户的写权限（保留读）
         $acl = Get-Acl $cfg
-        # 清掉继承来的规则，只留明确的
-        $acl.SetAccessRuleProtection($true, $false)
-        # 管理员完全控制
-        $admin = New-Object System.Security.AccessControl.FileSystemAccessRule(
-            "BUILTIN\Administrators", "FullControl", "Allow")
-        $acl.SetAccessRule($admin)
-        # SYSTEM 完全控制（服务以 SYSTEM 跑）
-        $sys = New-Object System.Security.AccessControl.FileSystemAccessRule(
-            "NT AUTHORITY\SYSTEM", "FullControl", "Allow")
-        $acl.SetAccessRule($sys)
+        $acl.SetAccessRuleProtection($true, $false)  # 去掉继承，只留下面三条
+        foreach ($spec in @(
+            @("BUILTIN\Administrators", "FullControl"),
+            @("NT AUTHORITY\SYSTEM", "FullControl"),
+            @("BUILTIN\Users", "Read")
+        )) {
+            $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($spec[0], $spec[1], "Allow")
+            $acl.SetAccessRule($rule)
+        }
         Set-Acl -Path $cfg -AclObject $acl
-        Write-Log "已设配置文件 ACL：仅管理员与 SYSTEM 可写"
+        Write-Log "已设配置文件权限：管理员与 SYSTEM 可写，其他用户只读"
     } else {
-        Write-Log "配置文件尚不存在（首次启动会生成），跳过 ACL"
+        Write-Log "配置文件尚不存在，跳过配置权限（服务首次启动会生成）"
     }
 } catch {
-    Write-Log "设置配置文件 ACL 失败（不影响安装）：$($_.Exception.Message)"
+    Write-Log "设置配置文件权限失败（不影响安装）：$($_.Exception.Message)"
+}
+
+# 运行目录：录屏进程跑在登录用户的会话里，要往 recordings\_spool、state、logs 里写
+try {
+    foreach ($dir in @("recordings", "state", "logs")) {
+        $path = Join-Path $InstallDir $dir
+        New-Item -ItemType Directory -Force -Path $path | Out-Null
+        $acl = Get-Acl $path
+        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+            "BUILTIN\Users", "Modify", "ContainerInherit,ObjectInherit", "None", "Allow")
+        $acl.SetAccessRule($rule)
+        Set-Acl -Path $path -AclObject $acl
+    }
+    Write-Log "已设运行目录权限：登录用户可写 recordings / state / logs"
+} catch {
+    Write-Log "设置运行目录权限失败（不影响安装）：$($_.Exception.Message)"
 }
 
 Write-Log "安装期配置完成"
