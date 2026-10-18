@@ -64,6 +64,7 @@ class Recording(Base):
     size: Mapped[int] = mapped_column(BigInteger)
     sha256: Mapped[str] = mapped_column(String(64), index=True)
     integrity: Mapped[str] = mapped_column(String(16))  # ok / repaired / partial
+    source: Mapped[str] = mapped_column(String(16), default="camera")  # camera / screen（WP12）
     status: Mapped[str] = mapped_column(String(16), default="synced")
     locked: Mapped[bool] = mapped_column(Boolean, default=False)
     # 中转节点（tasks.md WP10）：主服务器只存索引，文件在中转节点上，回放时按需代理取
