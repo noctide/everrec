@@ -1,4 +1,4 @@
-; EverRec 安装包脚本（tasks.md WP9、设计文档 14.1）
+﻿; EverRec 安装包脚本（tasks.md WP9、设计文档 14.1）
 ; 用 Inno Setup 6 编译：iscc packaging\windows\everrec.iss
 ;
 ; 选 Inno Setup 的理由（PR 里也写）：静默安装参数、升级/卸载保留数据、D→C 盘回退

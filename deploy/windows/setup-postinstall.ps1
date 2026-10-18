@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   EverRec 安装期系统配置（tasks.md WP9、设计文档 14.1）。
 
