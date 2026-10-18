@@ -40,6 +40,8 @@ log = logging.getLogger("agent")
 TICK_SECONDS = 2
 UPDATE_CHECK_SECONDS = 3600  # 每小时问一次服务器是否该更新；真正装不装由服务端按时段判定
 
+THUMBNAIL_SECONDS = 60  # 缩略图每分钟发一张（设计文档 6.2）
+
 
 class Agent:
     def __init__(self, cfg: AgentConfig, recent: RecentProblems | None = None, stall_seconds: float = 30):
@@ -57,6 +59,9 @@ class Agent:
         self._hb_thread: threading.Thread | None = None
         self._last_update_check = 0.0
         self._update_thread: threading.Thread | None = None
+
+        self._last_thumb = 0.0
+        self._thumb_thread: threading.Thread | None = None
         self.stop_event = threading.Event()
         self._encoding_label = cfg.recording.encoding.label
         self._encoding_note: str | None = None
@@ -450,6 +455,31 @@ class Agent:
         except Exception:  # 更新绝不能影响录制
             log.exception("更新检查异常（继续录制）")
 
+    def send_thumbnail(self) -> None:
+        """把最新缩略图发给服务器（小数据，不受补传排队影响）。"""
+        thumb = self.cfg.state_dir / "thumb.jpg"
+        if not thumb.exists():
+            return
+        url = f"{self.cfg.server.rstrip('/')}/agent/v1/thumbnail?code={self.cfg.code}"
+        try:
+            with thumb.open("rb") as f:
+                httpx.put(url, content=f.read(), timeout=5,
+                          headers={"Content-Type": "image/jpeg",
+                                   "X-Agent-Token": self.agent_token or ""})
+        except httpx.HTTPError:
+            pass  # 缩略图发不出去无所谓，下一分钟再试
+
+    def maybe_thumbnail(self) -> None:
+        if not self.cfg.server:
+            return
+        if time.monotonic() - self._last_thumb < THUMBNAIL_SECONDS:
+            return
+        if self._thumb_thread and self._thumb_thread.is_alive():
+            return
+        self._last_thumb = time.monotonic()
+        self._thumb_thread = threading.Thread(target=self.send_thumbnail, daemon=True)
+        self._thumb_thread.start()
+
     # ---------- 运行 ----------
 
     def tick(self) -> None:
@@ -463,6 +493,8 @@ class Agent:
         self.write_status()  # 每轮写状态文件给桌面端（WP8）
         self.maybe_heartbeat()
         self.maybe_update()  # 后台检查更新（WP9），不阻塞录制
+
+        self.maybe_thumbnail()
 
     def run(self) -> None:
         log.info("EverRec Agent %s 启动，位置编号 %s，录像目录 %s，错峰偏移 %d 秒",

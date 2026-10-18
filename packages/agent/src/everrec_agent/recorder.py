@@ -52,6 +52,7 @@ class Recorder:
             if self.running:
                 return
             spool_dir(self.cfg).mkdir(parents=True, exist_ok=True)
+            self.cfg.state_dir.mkdir(parents=True, exist_ok=True)  # 缩略图 thumb.jpg 写这里
             cmd = build_record_command(self.cfg)
             log.info("启动录制：%s", " ".join(cmd[1:]))
             self._stderr_tail = []

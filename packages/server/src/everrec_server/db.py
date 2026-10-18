@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, String, create_engine
+from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, Integer, String, create_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 
@@ -143,6 +143,26 @@ class Release(Base):
     sha256: Mapped[str] = mapped_column(String(64))
     notes: Mapped[str | None] = mapped_column(String(1024), nullable=True)  # 更新说明
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Delivery(Base):
+    """推送发件箱（设计文档 8.5）：先存后发，重试到送达或连续失败 24 小时暂停。"""
+
+    __tablename__ = "delivery"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    event_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)  # 去重
+    event_type: Mapped[str] = mapped_column(String(64))
+    severity: Mapped[str] = mapped_column(String(16))
+    code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    summary: Mapped[str] = mapped_column(String(256))
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)  # 完整消息体（设计 8.4）
+    status: Mapped[str] = mapped_column(String(16), default="pending")  # pending/sent/failed/paused
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    http_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 def make_session_factory(url: str) -> sessionmaker:

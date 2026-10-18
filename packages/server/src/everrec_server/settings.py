@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,6 +21,15 @@ def _parse_relays() -> dict[str, str]:
         if name and url:
             out[name] = url
     return out
+
+def _webhook_headers() -> dict[str, str]:
+    raw = os.environ.get("EVERREC_WEBHOOK_HEADERS", "")
+    if not raw:
+        return {}
+    try:
+        return dict(json.loads(raw))
+    except json.JSONDecodeError:
+        return {}
 
 
 @dataclass(frozen=True)
@@ -82,6 +92,11 @@ class Settings:
     releases_dir: Path = field(
         default_factory=lambda: Path(os.environ.get("EVERREC_RELEASES_DIR", "./releases"))
     )
+
+    # 事件推送（设计文档 8.3）：第一版一个地址，用环境变量；WP4 再做设置页
+    webhook_url: str = field(default_factory=lambda: os.environ.get("EVERREC_WEBHOOK_URL", ""))
+    webhook_secret: str = field(default_factory=lambda: os.environ.get("EVERREC_WEBHOOK_SECRET", ""))
+    webhook_headers: dict[str, str] = field(default_factory=_webhook_headers)
     web_dist: Path | None = field(
         default_factory=lambda: Path(p) if (p := os.environ.get("EVERREC_WEB_DIST")) else None
     )

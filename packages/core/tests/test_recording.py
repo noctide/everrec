@@ -60,3 +60,23 @@ def test_watcher_detects_stall(tmp_path):
     assert status is Check.FAIL and "无增长" in msg
     f.write_bytes(b"\0" * 200)  # 又开始长了
     assert w.check(now=32)[0] is Check.OK
+
+
+def test_thumbnail_is_written_and_updates(test_cfg):
+    """缩略图第二路输出：thumb.jpg 要写出来并按间隔更新（设计文档 6.2）。"""
+    test_cfg.state_dir.mkdir(parents=True, exist_ok=True)
+    spool_dir(test_cfg).mkdir(parents=True, exist_ok=True)
+    thumb = test_cfg.state_dir / "thumb.jpg"
+    p = subprocess.Popen(build_record_command(test_cfg, thumb_fps="2"), stderr=subprocess.DEVNULL)
+    try:
+        deadline = time.monotonic() + 10
+        while not thumb.exists() and time.monotonic() < deadline:
+            time.sleep(0.2)
+        assert thumb.exists(), "缩略图没写出来"
+        assert thumb.read_bytes()[:2] == b"\xff\xd8", "不是 JPEG"
+        m1 = thumb.stat().st_mtime
+        time.sleep(3)  # thumb_fps=2，应该已经更新过
+        assert thumb.stat().st_mtime > m1, "缩略图没按间隔更新"
+    finally:
+        p.terminate()
+        p.wait(10)

@@ -26,7 +26,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
-from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi import Body, Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -36,7 +36,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from everrec_core.protocol import Heartbeat, HeartbeatReply
 from everrec_core.version import is_newer
 
-from . import __version__, auth, config_push
+from . import __version__, auth, config_push, push
 from .db import (
     Agent,
     Event,
@@ -79,6 +79,8 @@ class DeviceOut(BaseModel):
     restarts: int
     pending_sync: int
     disk_used: float
+    has_thumbnail: bool
+    thumbnail_at: datetime | None
     recent_logs: list[dict]
     camera_resolutions: list[str]
 
@@ -109,6 +111,14 @@ def log_operation(
 ) -> None:
     """写操作日志（设计文档 15）。用户名在 WP5 登录后从会话传入，当前为空。"""
     s.add(OperationLog(action=action, recording_id=recording_id, user=user, detail=detail))
+
+
+def _thumbnail_info(settings: Settings, code: str) -> tuple[bool, datetime | None]:
+    """设备最新一张缩略图是否存在，以及它落盘的时间（失联的设备墙标时间用）。"""
+    thumb = settings.recordings_dir / "_thumbnails" / f"{code}.jpg"
+    if not thumb.exists():
+        return False, None
+    return True, datetime.fromtimestamp(thumb.stat().st_mtime, tz=UTC)
 
 
 # ---------- 应用 ----------
@@ -151,21 +161,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         agent.status = new
         if ev:
             etype, severity, summary = ev
+            detail = {"problems": agent.last_payload.get("problems", [])}
             s.add(Event(type=etype, severity=severity, agent_id=agent.id, code=agent.code,
-                        summary=summary, occurred_at=now,
-                        payload={"problems": agent.last_payload.get("problems", [])}))
+                        summary=summary, occurred_at=now, payload=detail))
+            push.enqueue(s, etype, severity, summary, agent.code, detail, now)
             log.info("事件 %s %s：%s", etype, agent.code, summary)
-            # TODO 第一版：投递到推送地址（发件箱 + 重试，设计文档 8.5）
 
     def sweep_once() -> None:
-        """后台判定失联。失联只能由服务器发现。中转节点上的设备由 relay 判定并镜像事件，这里跳过。"""
+        """后台判定失联。失联只能由服务器发现；大批同时失联合并成一条。"""
         now = datetime.now(UTC)
         with SessionLocal() as s:
             agents = s.scalars(select(Agent).where(Agent.via == "local")).all()
-            for a in agents:
-                new = device_status(a, now, settings.lost_after_seconds)
-                if new is Status.LOST and a.status != Status.LOST:
-                    record_transition(s, a, new, now)
+            if not agents:
+                return
+            lost = [a for a in agents
+                    if device_status(a, now, settings.lost_after_seconds) is Status.LOST]
+            newly_lost = [a for a in lost if a.status != Status.LOST]
+            mass = len(agents) >= 3 and len(lost) / len(agents) >= settings.mass_lost_ratio
+            if newly_lost:
+                if mass:
+                    for a in newly_lost:
+                        a.status = Status.LOST  # 只更新状态，不逐台推送
+                    summary = f"疑似服务器或网络故障（{len(lost)}/{len(agents)} 台设备同时失联）"
+                    detail = {"lost": len(lost), "total": len(agents)}
+                    s.add(Event(type="mass_lost", severity="critical", summary=summary,
+                                occurred_at=now, payload=detail))
+                    push.enqueue(s, "mass_lost", "critical", summary, None, detail, now)
+                    log.info("事件 mass_lost：%s", summary)
+                else:
+                    for a in newly_lost:
+                        record_transition(s, a, Status.LOST, now)
             s.commit()
 
     def sweeper() -> None:
@@ -196,8 +221,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if new_state in ("warn", "critical"):
                     severity = "critical" if new_state == "critical" else "warning"
                     summary = f"服务器磁盘空间不足（已用 {ratio:.0%}）"
+                    detail = {"disk_used": ratio, "level": new_state}
                     s.add(Event(type="storage.low", severity=severity, summary=summary,
-                                occurred_at=now, payload={"disk_used": ratio, "level": new_state}))
+                                occurred_at=now, payload=detail))
+                    push.enqueue(s, "storage.low", severity, summary, None, detail, now)
                     log.info("事件 storage.low：%s", summary)
                 disk_state = new_state
             s.commit()
@@ -339,6 +366,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             except Exception:
                 log.exception("拉取中转节点出错")
 
+    def push_worker() -> None:
+        push.worker(SessionLocal, settings, stop)
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         _ensure_relay_rows()
@@ -346,6 +376,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             threading.Thread(target=sweeper, daemon=True, name="lost-sweeper"),
             threading.Thread(target=retention_worker, daemon=True, name="retention"),
             threading.Thread(target=relay_puller, daemon=True, name="relay-puller"),
+            threading.Thread(target=push_worker, daemon=True, name="push-worker"),
         ]
         for t in threads:
             t.start()
@@ -433,6 +464,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             presented = request.headers.get("X-Agent-Token", "")
             if not auth.verify_agent_token(presented, agent.token_hash):
                 raise HTTPException(status_code=401, detail="设备凭据无效")
+        old_storage = (agent.last_payload or {}).get("checks", {}).get("storage", "ok")
         agent.hostname, agent.version, agent.last_heartbeat = hb.hostname, hb.agent_version, now
         agent.last_payload = hb.model_dump(mode="json", exclude={"recent_logs"})
         if hb.recent_logs:
@@ -445,6 +477,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             location_options=config_push.location_options(s),
             token=token,
         )
+        # storage.low：存储检查从 ok 变 warn/fail（设计文档 8.1 存储类事件）
+        new_storage = hb.checks.storage
+        if old_storage == "ok" and new_storage in ("warn", "fail"):
+            severity = "critical" if new_storage == "fail" else "warning"
+            summary = f"磁盘空间不足（已用 {int(hb.disk_used * 100)}%）"
+            detail = {"disk_used": hb.disk_used, "level": str(new_storage)}
+            s.add(Event(type="storage.low", severity=severity, agent_id=agent.id, code=agent.code,
+                        summary=summary, occurred_at=now, payload=detail))
+            push.enqueue(s, "storage.low", severity, summary, agent.code, detail, now)
+            log.info("事件 storage.low %s：%s", agent.code, summary)
         s.commit()
         return reply
 
@@ -467,6 +509,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 continue
             p = a.last_payload or {}
             last = aware(a.last_heartbeat)
+            has_thumb, thumb_at = _thumbnail_info(settings, a.code)
             out.append(DeviceOut(
                 id=a.id, code=a.code, hostname=a.hostname, version=a.version, status=st,
                 last_heartbeat=last, seconds_since_heartbeat=int((now - last).total_seconds()),
@@ -474,6 +517,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 current_segment=p.get("current_segment"), checks=p.get("checks", {}),
                 problems=p.get("problems", []), restarts=p.get("restarts", 0),
                 pending_sync=p.get("pending_sync", 0), disk_used=p.get("disk_used", 0),
+                has_thumbnail=has_thumb, thumbnail_at=thumb_at,
                 recent_logs=(a.recent_logs or [])[-20:],
                 camera_resolutions=p.get("camera_resolutions", []),
             ))
@@ -780,6 +824,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not path.exists():
             raise HTTPException(status_code=404, detail="安装包文件缺失")
         return FileResponse(path, filename=latest.filename, media_type="application/octet-stream")
+
+    @app.post("/api/v1/push/test")
+    def push_test():
+        """测试推送接口：立即发一条测试消息，返回对方状态码和内容（设计文档 8.3）。"""
+        if not settings.webhook_url:
+            return {"ok": False, "error": "没有配置推送地址（EVERREC_WEBHOOK_URL）"}
+        now = utcnow()
+        msg = push.build_message("push.test", "info", "测试推送", None, {}, now)
+        try:
+            r = push.post_message(settings, msg["eventId"], msg)
+            return {"ok": 200 <= r.status_code < 300, "status_code": r.status_code,
+                    "body": r.text[:200]}
+        except httpx.HTTPError as e:
+            return {"ok": False, "error": str(e)}
+
+    @app.put("/agent/v1/thumbnail")
+    def put_thumbnail(request: Request, code: str = Query(...), payload: bytes = Body(...),
+                      s: Session = Depends(get_db)):
+        """Agent 每分钟上传一张缩略图；只保留每台最新一张（设计文档 6.2）。"""
+        if not re.fullmatch(r"[A-Za-z0-9-]+", code):
+            raise HTTPException(status_code=400, detail="非法位置编号")
+        _require_agent(s, request, code)
+        if len(payload) > 1_000_000:
+            raise HTTPException(status_code=413, detail="缩略图太大")
+        thumb_dir = settings.recordings_dir / "_thumbnails"
+        thumb_dir.mkdir(parents=True, exist_ok=True)
+        dest = thumb_dir / f"{code}.jpg"
+        tmp = dest.with_name(dest.name + ".tmp")
+        tmp.write_bytes(payload)
+        tmp.replace(dest)  # 原子替换，避免读到写一半的图
+        return {"ok": True}
+
+    @app.get("/api/v1/devices/{device_id}/snapshot")
+    def device_snapshot(device_id: int, s: Session = Depends(get_db)):
+        agent = s.get(Agent, device_id)
+        if agent is None:
+            raise HTTPException(status_code=404, detail="没有这台设备")
+        thumb = settings.recordings_dir / "_thumbnails" / f"{agent.code}.jpg"
+        if not thumb.exists():
+            raise HTTPException(status_code=404, detail="还没有缩略图")
+        return FileResponse(thumb, media_type="image/jpeg")
 
     if settings.web_dist and settings.web_dist.exists():
         app.mount("/", StaticFiles(directory=settings.web_dist, html=True), name="web")
