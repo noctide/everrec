@@ -1,6 +1,6 @@
 [project]
 name = "everrec-server"
-version = "0.1.0"
+version = "0.2.0"
 description = "EverRec 服务端：心跳、失联判定、设备状态 API"
 requires-python = ">=3.12"
 dependencies = [

@@ -2,7 +2,11 @@
 
 面向设备操作区的轻量录像系统：每台操作区电脑 24 小时连续录制，能连上服务器就集中管理，连不上就在本地独立运行；管理网站统一查看每个摄像头是否在正常录制。
 
-**状态：第一版功能开发完成（WP1–WP10），尚未经 Windows 现场验收。** 录制、上传补传、保留与滚动覆盖、回放、设置与配置下发、登录与凭据、事件推送、缩略图、桌面端、打包与自动更新、中转节点均已实现并通过自动化测试；Windows 实机验证与试点验收（WP11）待做，见下方[进度](#进度)。
+**状态：第一版功能已全部实现（WP1–WP13），当前版本 0.2.0（预览版），尚未经 Windows 现场验收。**
+录制、上传补传、保留与滚动覆盖、回放、设置与配置下发、登录与凭据、事件推送、缩略图、
+屏幕录制与截屏、六级组织树与责任人、桌面端、打包与自动更新、中转节点均已实现并通过自动化测试；
+预览版安装包见 [Releases](https://github.com/noctide/everrec/releases)，
+Windows 实机验证与试点验收（WP11）待做，见[验收清单](docs/acceptance.md)。
 
 ## 核心特点
 
@@ -77,13 +81,13 @@ uv run everrec-agent run -c ./demo/config/everrec.yaml
 
 ## 打包与安装（Windows）
 
-用 PyInstaller 打 4 个程序（Agent、客户端、托盘、修复工具），Inno Setup 打安装包，GitHub Actions（`windows-latest`）自动产出。本地在 Windows 上打包：
+用 PyInstaller 打 3 个 onedir（`everrec-agent`、`everrec-desktop`、`everrec-screen`；客户端、托盘、修复工具是同一个 exe 的三个入口），Inno Setup 打安装包，GitHub Actions（`windows-latest`）在推 `v*` tag 时自动产出。本地在 Windows 上打包：
 
 ```powershell
 # 装打包工具
 uv pip install pyinstaller
 # 下 FFmpeg（含 libx264）到 third_party\ffmpeg\，下 WinSW 到 packaging\windows\winsw\
-# 打包 4 个程序 + 放 FFmpeg 到各自 bin\
+# 打包 3 个 onedir + 放 FFmpeg 到各自 bin\
 powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1 -FfmpegDir third_party\ffmpeg
 # 编译安装包（iscc 随 Inno Setup 6 安装）
 iscc packaging\windows\everrec.iss
@@ -93,6 +97,12 @@ iscc packaging\windows\everrec.iss
 
 **许可注意**：安装包里的 FFmpeg 带 libx264，适用 GPL。公司内部使用没有问题；若以后对外分发，需按 GPL 处理或改用其他编码器（见设计文档第 12 节）。
 
+## 预览版下载
+
+当前预览版 **0.2.0** 在 GitHub 的 [Releases](https://github.com/noctide/everrec/releases) 里（标着 "Pre-release"），
+下载 `EverRecSetup-0.2.0.exe` 装到现场电脑即可。预览版用于 Windows 现场验收，装之前先看
+[验收清单](docs/acceptance.md)；问题按清单最后一节的方式记下来。
+
 ## 进度
 
 | 部分 | 状态 |
@@ -101,9 +111,11 @@ iscc packaging\windows\everrec.iss
 | 上传与补传、保留与滚动覆盖、回放 | 完成（自动化测试通过） |
 | 设置页与配置下发、登录与凭据 | 完成 |
 | 事件推送（通用 JSON + HMAC）、缩略图 | 完成 |
+| 屏幕录制（与摄像头二选一）、一键 / 定时截屏 | 完成；需在 Windows 上验证 |
+| 六级组织树与责任人、首页 | 完成；首页只放编号和状态，画面在设备墙看 |
 | 桌面端（修复工具、托盘、客户端）、打包与自动更新 | 完成；需在 Windows 上验证 |
 | 子公司中转节点 | 完成 |
-| 试点与验收（WP11） | 待做，需真实电脑 24 小时、断网、断电等实测 |
+| 试点与验收（WP11） | 进行中：0.2.0 预览版已发布，等现场按验收清单逐项做 |
 
 ## 规划的技术选型
 

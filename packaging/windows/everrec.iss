@@ -11,7 +11,7 @@
 ;   - 装完注册 WinSW 服务（开机自启）、跑安装期 PowerShell（相机权限/电源/USB/ACL/自启）。
 
 #define MyAppName "EverRec 恒录"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.2.0"
 #define MyAppPublisher "EverRec"
 #define DistDir "..\..\dist"
 

@@ -1,6 +1,6 @@
 [project]
 name = "everrec-core"
-version = "0.1.0"
+version = "0.2.0"
 description = "EverRec 公共核心库：配置、录制命令、分段、健康检查、修复（Agent / 服务端 / 修复工具共用）"
 requires-python = ">=3.12"
 dependencies = [
