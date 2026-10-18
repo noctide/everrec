@@ -1,6 +1,6 @@
 [project]
 name = "everrec-relay"
-version = "0.1.0"
+version = "0.2.0"
 description = "EverRec 子公司中转节点：对子公司 Agent 提供与主服务器相同的接口，对主服务器提供增量拉取（tasks.md WP10）"
 requires-python = ">=3.12"
 dependencies = [

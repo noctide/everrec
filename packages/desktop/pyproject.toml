@@ -1,6 +1,6 @@
 [project]
 name = "everrec-desktop"
-version = "0.1.0"
+version = "0.2.0"
 description = "EverRec 桌面端：修复工具、托盘状态窗、录像客户端"
 requires-python = ">=3.12"
 dependencies = [
